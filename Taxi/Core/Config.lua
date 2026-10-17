@@ -51,6 +51,14 @@ local M = {
     NEW_BELOW = 5, -- a warlock with fewer ratings is shown as "New"
     CAP_PER_KIND = 500,
     STRIKES_MAX = 3,
+    -- Relayed (second-hand) ratings can never weigh more than this together.
+    -- Per relayer: the most one relayer can add for one warlock and kind.
+    -- In total: the most all relayers can add for one warlock and kind.
+    RELAY_CAP_PER_RELAYER = 0.5,
+    RELAY_CAP_TOTAL = 2.0,
+    -- A rating, death, ride log or receipt dated more than this many seconds
+    -- after the receiver's clock is refused as "future".
+    FUTURE_SLACK = 300,
   },
 
   -- Warlock spells and items (Classic IDs; verified in-game in Task 19)

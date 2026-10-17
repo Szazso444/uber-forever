@@ -23,6 +23,7 @@ describe("Config values", function()
       PRIOR_MEAN = 3.5, PRIOR_WEIGHT = 5, W_TWO_SIDED = 1.0, W_ONE_SIDED = 0.3,
       W_DEATH = 5.0, W_RELAYED = 0.2, W_RELAYED_CORROBORATED = 0.5,
       CORROBORATE_MIN = 3, NEW_BELOW = 5, CAP_PER_KIND = 500, STRIKES_MAX = 3,
+      RELAY_CAP_PER_RELAYER = 0.5, RELAY_CAP_TOTAL = 2.0, FUTURE_SLACK = 300,
     }, C.RATING)
   end)
 

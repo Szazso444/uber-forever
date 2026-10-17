@@ -8,8 +8,14 @@ local _, ns = ...
 --   * a direct rating counts only when its sender is its rater;
 --   * a copy passed on by someone else (relayed) counts at low weight, and
 --     more when three or more relayers back the same record;
---   * a relayer whose copy turns out to contradict the rater's own gets a
---     strike, and one with STRIKES_MAX strikes is ignored;
+--   * all the relayed weight for a warlock is capped, per relayer and in total,
+--     so a flood of invented records buys only a small, fixed amount;
+--   * a relayer whose copy was provably altered (same id and time as the
+--     rater's own rating, other stars) gets a strike, and one with
+--     STRIKES_MAX strikes is ignored;
+--   * a rating counts in full only when the warlock's ride log names its
+--     rater; all of one rater's other (one-sided) ratings count as one;
+--   * records dated ahead of the receiver's clock are refused;
 --   * a player caught lying is ignored altogether;
 --   * a death after a summon weighs heavily.
 -- A warlock shown with a score that is too high could get a Hardcore traveler
@@ -64,19 +70,25 @@ local function isStruck(db, name)
   return strikesOf(db, name) >= ns.Config.RATING.STRIKES_MAX
 end
 
--- How many of the relayers in via are still believed. A via that is not a
--- table counts nobody.
+-- The relayers in via that are still believed, sorted so every sum made from
+-- them comes out the same each time. A via that is not a table has none.
 local function liveRelayers(db, via)
-  if type(via) ~= "table" then
-    return 0
-  end
-  local n = 0
-  for relayer in pairs(via) do
-    if type(relayer) == "string" and not isLiar(db, relayer) and not isStruck(db, relayer) then
-      n = n + 1
+  local live = {}
+  if type(via) == "table" then
+    for relayer in pairs(via) do
+      if type(relayer) == "string" and not isLiar(db, relayer) and not isStruck(db, relayer) then
+        live[#live + 1] = relayer
+      end
     end
+    table.sort(live)
   end
-  return n
+  return live
+end
+
+-- True when ts is dated further ahead of now than clocks can honestly differ.
+-- Without a usable now there is nothing to compare with.
+local function tooFar(ts, now)
+  return finite(now) and ts > now + ns.Config.RATING.FUTURE_SLACK
 end
 
 -- Give a strike to every relayer in via.
@@ -109,6 +121,32 @@ end
 
 -- Records ----------------------------------------------------------------------
 
+-- True when every share amount a row carries is a finite number >= 0.
+local function validAmounts(r)
+  for _, field in ipairs(AMOUNTS) do
+    local v = r[field]
+    if v ~= nil and (not finite(v) or v < 0) then
+      return false
+    end
+  end
+  return true
+end
+
+-- A stored rating row that can be used: a hand-edited SavedVariables must
+-- never make a read raise, so anything malformed is skipped.
+local function validRating(r, kind)
+  return type(r) == "table"
+    and isStars(r.stars)
+    and nonEmptyString(r.id)
+    and nonEmptyString(r.rater)
+    and finite(r.ts)
+    and (kind ~= "share" or validAmounts(r))
+end
+
+local function validDeath(d)
+  return type(d) == "table" and nonEmptyString(d.victim) and finite(d.ts)
+end
+
 -- Who made a record and who it is about, as normalized names; nil when it is
 -- not a trust or share record naming both.
 local function identify(rec)
@@ -137,14 +175,11 @@ local function build(rec, rater, target)
   end
   local r = { kind = rec.kind, rater = rater, target = target, stars = rec.stars, id = rec.id, ts = rec.ts }
   if rec.kind == "share" then
+    if not validAmounts(rec) then
+      return nil, "bad_record"
+    end
     for _, field in ipairs(AMOUNTS) do
-      local v = rec[field]
-      if v ~= nil then
-        if not finite(v) or v < 0 then
-          return nil, "bad_record"
-        end
-        r[field] = v
-      end
+      r[field] = rec[field]
     end
   end
   return r
@@ -169,7 +204,7 @@ end
 
 -- Check rec and keep it as a direct rating. Returns the record that was built
 -- (even when a newer rating of the day was kept instead), or nil and a reason.
-local function accept(db, rec, sender)
+local function accept(db, rec, sender, now)
   if db._newer then
     return nil, "readonly"
   end
@@ -183,6 +218,9 @@ local function accept(db, rec, sender)
   local r, why = build(rec, rater, target)
   if not r then
     return nil, why
+  end
+  if tooFar(r.ts, now) then
+    return nil, "future"
   end
   if isLiar(db, rater) then
     return nil, "liar"
@@ -199,11 +237,13 @@ local function accept(db, rec, sender)
   end
 
   -- Everything else of the rater's in that slot goes. A relayed copy of this
-  -- very rating that said something else was lying: its relayers are struck.
+  -- very rating (same id, same time) that said other stars was altered on the
+  -- way, so its relayers are struck. A copy with another time is just older
+  -- or newer than this one, and no relayer is blamed for that.
   for i = #list, 1, -1 do
     local e = list[i]
     if sameSlot(e, r, day) then
-      if isRelayed(e) and e.id == r.id and e.stars ~= r.stars then
+      if isRelayed(e) and e.id == r.id and e.ts == r.ts and e.stars ~= r.stars then
         strikeAll(db, e.via)
       end
       table.remove(list, i)
@@ -213,13 +253,15 @@ local function accept(db, rec, sender)
   return r
 end
 
--- A rating sent by its rater. Returns true, or nil and a reason:
--- "not_rater", "bad_stars", "bad_record", "liar" or "readonly".
+-- A rating sent by its rater. now is the receiver's clock (seconds); leave it
+-- out and the date is not checked. Returns true, or nil and a reason:
+-- "not_rater", "bad_stars", "bad_record", "future" (dated ahead of now), "liar"
+-- or "readonly".
 -- The same rater's rating of the same warlock and kind on the same day
 -- replaces the older one. A relayed copy of this rating is upgraded to direct,
--- and its relayers are struck when it said different stars.
-function M.addDirect(db, rec, sender)
-  local r, why = accept(db, rec, sender)
+-- and its relayers are struck only when the copy was provably altered.
+function M.addDirect(db, rec, sender, now)
+  local r, why = accept(db, rec, sender, now)
   if not r then
     return nil, why
   end
@@ -228,27 +270,35 @@ end
 
 -- A rating passed on by relayer. Returns true, or nil and a reason:
 -- "liar" (the rater or the relayer is one), "struck" (the relayer has too many
--- strikes), "contradicts_direct" (and the relayer gets a strike), "has_direct"
--- (the rater's own rating is already here), "conflict" (another relayed
--- version is here and it stays: the new one is refused, with no strike), plus
--- "bad_stars", "bad_record" and "readonly".
--- A second relayer of the same record is added to its via.
-function M.addRelayed(db, rec, relayer)
+-- strikes), "contradicts_direct" (a copy of the rater's own rating with other
+-- stars: the relayer gets a strike), "has_direct" (the rater's own rating is
+-- already here, so this copy adds nothing and nobody is struck), "conflict"
+-- (a relayed version with the same or fewer stars is here and stays), plus
+-- "bad_stars", "bad_record", "future" and "readonly". A warlock relaying
+-- ratings about itself is "bad_record".
+-- A second relayer of the very same record (id, stars and time) is added to its
+-- via. When two relayed versions differ, the one with the lower stars is kept,
+-- which is the safe way round for a traveler; no relayer is struck for it.
+function M.addRelayed(db, rec, relayer, now)
   if db._newer then
     return nil, "readonly"
   end
   local rater, target = identify(rec)
   local who = nameOf(relayer)
-  if rater == nil or who == nil then
+  -- A warlock passing on ratings of itself would be marking its own homework.
+  if rater == nil or who == nil or who == target then
     return nil, "bad_record"
   end
   local r, why = build(rec, rater, target)
   if not r then
     return nil, why
   end
+  if tooFar(r.ts, now) then
+    return nil, "future"
+  end
   -- A rater passing on their own rating is just sending it.
   if who == rater then
-    return M.addDirect(db, rec, relayer)
+    return M.addDirect(db, rec, relayer, now)
   end
   if isLiar(db, rater) or isLiar(db, who) then
     return nil, "liar"
@@ -259,40 +309,46 @@ function M.addRelayed(db, rec, relayer)
 
   local list = ns.Store.ratingList(db, target, r.kind)
   local day = ns.Util.day(r.ts)
-  local same, directThatDay, relayedThatDay
-  for _, e in ipairs(list) do
-    if type(e) == "table" and e.rater == rater then
-      if e.id == r.id then
-        same = e
-      elseif finite(e.ts) and ns.Util.day(e.ts) == day then
-        if isDirect(e) then
-          directThatDay = true
-        else
-          relayedThatDay = true
+  local rivals = {} -- indexes of the relayed versions in this rater's slot
+  for i, e in ipairs(list) do
+    if sameSlot(e, r, day) then
+      if isDirect(e) then
+        -- Only a copy of this very record (same id, same time) with other
+        -- stars was altered; any other difference is just an older or newer
+        -- version, and the rater's own rating wins without blame.
+        if e.id == r.id and e.ts == r.ts and e.stars ~= r.stars then
+          M.strike(db, who)
+          return nil, "contradicts_direct"
         end
+        return nil, "has_direct"
+      elseif isRelayed(e) and isStars(e.stars) then
+        rivals[#rivals + 1] = i
       end
     end
   end
 
-  if same then
-    if isDirect(same) then
-      if same.stars == r.stars then
-        return nil, "has_direct"
-      end
-      M.strike(db, who)
-      return nil, "contradicts_direct"
+  if #rivals > 0 then
+    local lowest = 5
+    for _, i in ipairs(rivals) do
+      lowest = math.min(lowest, list[i].stars)
     end
-    if not isRelayed(same) or same.stars ~= r.stars then
+    if r.stars < lowest then
+      -- The lower version replaces every higher one.
+      for k = #rivals, 1, -1 do
+        table.remove(list, rivals[k])
+      end
+    elseif r.stars == lowest then
+      for _, i in ipairs(rivals) do
+        local e = list[i]
+        if e.id == r.id and e.stars == r.stars and e.ts == r.ts then
+          e.via[who] = true
+          return true
+        end
+      end
+      return nil, "conflict"
+    else
       return nil, "conflict"
     end
-    same.via[who] = true
-    return true
-  end
-  if directThatDay then
-    return nil, "has_direct"
-  end
-  if relayedThatDay then
-    return nil, "conflict"
   end
 
   r.via = { [who] = true }
@@ -303,8 +359,8 @@ end
 -- The rating the player gives: kept in `given` for good, then counted as a
 -- direct rating from its rater. Returns what addDirect returns; a rating it
 -- refuses is not added to `given`.
-function M.give(db, rec)
-  local r, why = accept(db, rec, type(rec) == "table" and rec.rater or nil)
+function M.give(db, rec, now)
+  local r, why = accept(db, rec, type(rec) == "table" and rec.rater or nil, now)
   if not r then
     return nil, why
   end
@@ -332,8 +388,9 @@ end
 -- A death after a summon: d = {target, victim, id, ts, heavy, via}. It is kept
 -- in db.deaths[target][id]. A heavy death (first hand) replaces a light one
 -- (heard from others); a light one never replaces a heavy one. Returns true,
--- or nil and "bad_record" or "readonly".
-function M.addDeath(db, d)
+-- or nil and "bad_record", "future" (dated ahead of now, the receiver's clock;
+-- leave it out and the date is not checked) or "readonly".
+function M.addDeath(db, d, now)
   if db._newer then
     return nil, "readonly"
   end
@@ -343,6 +400,9 @@ function M.addDeath(db, d)
   local target, victim = nameOf(d.target), nameOf(d.victim)
   if target == nil or victim == nil or not nonEmptyString(d.id) or not finite(d.ts) then
     return nil, "bad_record"
+  end
+  if tooFar(d.ts, now) then
+    return nil, "future"
   end
   if d.via ~= nil and type(d.via) ~= "table" then
     return nil, "bad_record"
@@ -396,14 +456,18 @@ function M.removeDeath(db, target, id)
 end
 
 -- A warlock's own record of a ride they gave: db.rideLogs[warlock][id].
--- Returns true, or nil and "bad_record" or "readonly".
-function M.addRideLog(db, warlock, id, ts, traveler)
+-- Returns true, or nil and "bad_record", "future" (ts is ahead of now, the
+-- receiver's clock; leave now out and it is not checked) or "readonly".
+function M.addRideLog(db, warlock, id, ts, traveler, now)
   if db._newer then
     return nil, "readonly"
   end
   local name, rider = nameOf(warlock), nameOf(traveler)
   if name == nil or rider == nil or not nonEmptyString(id) or not finite(ts) then
     return nil, "bad_record"
+  end
+  if tooFar(ts, now) then
+    return nil, "future"
   end
   local logs = db.rideLogs[name]
   if type(logs) ~= "table" then
@@ -415,14 +479,18 @@ function M.addRideLog(db, warlock, id, ts, traveler)
 end
 
 -- A traveler's note that a ride arrived: db.receipts[warlock][id] = ts.
--- Returns true, or nil and "bad_record" or "readonly".
-function M.addReceipt(db, warlock, id, ts)
+-- Returns true, or nil and "bad_record", "future" (ts is ahead of now, the
+-- receiver's clock; leave now out and it is not checked) or "readonly".
+function M.addReceipt(db, warlock, id, ts, now)
   if db._newer then
     return nil, "readonly"
   end
   local name = nameOf(warlock)
   if name == nil or not nonEmptyString(id) or not finite(ts) then
     return nil, "bad_record"
+  end
+  if tooFar(ts, now) then
+    return nil, "future"
   end
   local receipts = db.receipts[name]
   if type(receipts) ~= "table" then
@@ -456,43 +524,7 @@ end
 
 -- Summary -------------------------------------------------------------------------
 
--- What a stored rating weighs, or nil when it is not counted.
-local function ratingWeight(db, target, kind, r)
-  if type(r) ~= "table" or not isStars(r.stars) or isLiar(db, r.rater) then
-    return nil
-  end
-  local C = ns.Config.RATING
-  if r.via == nil then
-    -- A clicker is by definition in the ride, so a direct share rating is
-    -- as good as a two-sided trust rating.
-    if kind == "share" or sub(db, "rideLogs", target)[r.id] ~= nil then
-      return C.W_TWO_SIDED
-    end
-    return C.W_ONE_SIDED
-  end
-  local live = liveRelayers(db, r.via)
-  if live == 0 then
-    return nil
-  elseif live >= C.CORROBORATE_MIN then
-    return C.W_RELAYED_CORROBORATED
-  end
-  return C.W_RELAYED
-end
-
--- What a stored death weighs (it always counts as 1 star), or nil when it is
--- not counted.
-local function deathWeight(db, d)
-  if type(d) ~= "table" or isLiar(db, d.victim) then
-    return nil
-  end
-  if d.via ~= nil and liveRelayers(db, d.via) == 0 then
-    return nil
-  end
-  local C = ns.Config.RATING
-  return d.heavy == true and C.W_DEATH or C.W_RELAYED
-end
-
--- The ids of a table in a fixed order, so sums come out the same every time.
+-- The string keys of a table in a fixed order, so sums come out the same every time.
 local function sortedKeys(t)
   local keys = {}
   for k in pairs(t) do
@@ -504,23 +536,93 @@ local function sortedKeys(t)
   return keys
 end
 
+-- True when the ride log for a rating names its rater as the traveler.
+local function namesRater(logs, r)
+  local log = logs[r.id]
+  return type(log) == "table" and ns.Names.same(log.traveler, r.rater)
+end
+
+-- Whether a death counts, and who stands behind it. Returns false for a death
+-- that is ignored (malformed, or its victim is a liar, or every relayer is
+-- struck or a liar). Otherwise true and the live relayers, nil for a first-hand
+-- report that has none.
+local function deathStanding(db, d)
+  if not validDeath(d) or isLiar(db, d.victim) then
+    return false
+  end
+  if d.via == nil then
+    return true, nil
+  end
+  local live = liveRelayers(db, d.via)
+  return #live > 0, live
+end
+
+-- Set the weight of every relayed entry. An entry has a base weight (W_RELAYED,
+-- or W_RELAYED_CORROBORATED when three or more relayers back it) that is split
+-- equally among its live relayers. What one relayer carries over all its
+-- entries is then scaled down to RELAY_CAP_PER_RELAYER, and the sum over all
+-- the entries to RELAY_CAP_TOTAL, each time in proportion. A forged flood of
+-- second-hand records therefore buys a fixed, small amount of weight and no more.
+local function weighRelayed(entries)
+  local C = ns.Config.RATING
+  local carried = {}
+  for _, e in ipairs(entries) do
+    local part = e.base / #e.relayers
+    for _, relayer in ipairs(e.relayers) do
+      carried[relayer] = (carried[relayer] or 0) + part
+    end
+  end
+  local scale = {}
+  for relayer, sum in pairs(carried) do
+    scale[relayer] = sum > C.RELAY_CAP_PER_RELAYER and C.RELAY_CAP_PER_RELAYER / sum or 1
+  end
+  local total = 0
+  for _, e in ipairs(entries) do
+    local kept = 0
+    for _, relayer in ipairs(e.relayers) do
+      kept = kept + scale[relayer]
+    end
+    e.weight = e.base * (kept / #e.relayers)
+    total = total + e.weight
+  end
+  if total > C.RELAY_CAP_TOTAL then
+    local factor = C.RELAY_CAP_TOTAL / total
+    for _, e in ipairs(entries) do
+      e.weight = e.weight * factor
+    end
+  end
+end
+
 -- summary(db, target, kind) -> {stars, score, count, isNew, deathsReported}
 --   stars           the weighted mean, one decimal, without the prior; nil
 --                   when nothing counts
 --   score           the weighted mean pulled toward the prior mean, for
 --                   sorting and warnings
 --   count           trust: distinct ride ids across ratings, deaths and
---                   receipts; share: the number of ratings
---   isNew           fewer than NEW_BELOW ratings (and deaths, for trust)
+--                   receipts; share: the number of ratings. A display figure
+--                   only: relayed ratings and receipts are in it.
+--   isNew           fewer than NEW_BELOW direct ratings (and heavy deaths, for
+--                   trust). Second-hand records and receipts never clear it.
 --   deathsReported  deaths counted against the warlock, heavy or light
--- Reading creates nothing.
+-- Weights:
+--   * a direct trust rating is two-sided (W_TWO_SIDED) only when the
+--     warlock's ride log for its id names its rater as the traveler, else
+--     one-sided (W_ONE_SIDED); all of one rater's one-sided ratings together
+--     count as one, the newest, and the rest weigh nothing (but are kept);
+--   * a direct share rating weighs W_TWO_SIDED;
+--   * a relayed rating or light death with relayers weighs what weighRelayed
+--     leaves it; a light death nobody relayed (seen first hand) weighs
+--     W_RELAYED; a heavy death weighs W_DEATH.
+-- Ignored records do not count anywhere: those of a liar, those whose relayers
+-- are all struck or liars, and malformed rows. Reading creates nothing.
 function M.summary(db, target, kind)
   if not KINDS[kind] then
     error('Ratings.summary: kind must be "trust" or "share"', 2)
   end
   local C = ns.Config.RATING
   local name = not db._newer and nameOf(target) or nil
-  local sumW, sumWS, used, deaths = 0, 0, 0, 0
+  local entries, relayed = {}, {}
+  local ratings, directRatings, deaths, heavyDeaths = 0, 0, 0, 0
   local ids, distinct = {}, 0
   local function seen(id)
     if not ids[id] then
@@ -530,28 +632,85 @@ function M.summary(db, target, kind)
   end
 
   if name then
-    for _, r in ipairs(stored(db, name, kind)) do
-      local w = ratingWeight(db, name, kind, r)
-      if w then
-        sumW, sumWS, used = sumW + w, sumWS + w * r.stars, used + 1
-        seen(r.id)
+    local list = stored(db, name, kind)
+    local logs = sub(db, "rideLogs", name)
+
+    -- Each rater's newest one-sided trust rating is the only one that counts.
+    local newest = {}
+    if kind == "trust" then
+      for _, r in ipairs(list) do
+        if validRating(r, kind) and r.via == nil and not isLiar(db, r.rater) and not namesRater(logs, r) then
+          local best = newest[r.rater]
+          if best == nil or r.ts > best.ts or (r.ts == best.ts and r.id > best.id) then
+            newest[r.rater] = r
+          end
+        end
       end
     end
+
+    for _, r in ipairs(list) do
+      if validRating(r, kind) and not isLiar(db, r.rater) then
+        if r.via == nil then
+          local weight
+          if kind == "share" or namesRater(logs, r) then
+            weight = C.W_TWO_SIDED
+          elseif newest[r.rater] == r then
+            weight = C.W_ONE_SIDED
+          end
+          if weight then
+            entries[#entries + 1] = { stars = r.stars, weight = weight }
+            ratings, directRatings = ratings + 1, directRatings + 1
+            seen(r.id)
+          end
+        elseif type(r.via) == "table" then
+          local live = liveRelayers(db, r.via)
+          if #live > 0 then
+            local e = {
+              stars = r.stars,
+              base = #live >= C.CORROBORATE_MIN and C.W_RELAYED_CORROBORATED or C.W_RELAYED,
+              relayers = live,
+            }
+            entries[#entries + 1] = e
+            relayed[#relayed + 1] = e
+            ratings = ratings + 1
+            seen(r.id)
+          end
+        end
+      end
+    end
+
     if kind == "trust" then
       local byId = sub(db, "deaths", name)
       for _, id in ipairs(sortedKeys(byId)) do
-        local w = deathWeight(db, byId[id])
-        if w then
-          sumW, sumWS, deaths = sumW + w, sumWS + w, deaths + 1
+        local d = byId[id]
+        local counts, live = deathStanding(db, d)
+        if counts then
+          if d.heavy == true then
+            entries[#entries + 1] = { stars = 1, weight = C.W_DEATH }
+            heavyDeaths = heavyDeaths + 1
+          elseif live then
+            local e = { stars = 1, base = C.W_RELAYED, relayers = live }
+            entries[#entries + 1] = e
+            relayed[#relayed + 1] = e
+          else
+            entries[#entries + 1] = { stars = 1, weight = C.W_RELAYED }
+          end
+          deaths = deaths + 1
           seen(id)
         end
       end
       for id in pairs(sub(db, "receipts", name)) do
-        if type(id) == "string" then
+        if nonEmptyString(id) then
           seen(id)
         end
       end
     end
+  end
+
+  weighRelayed(relayed)
+  local sumW, sumWS = 0, 0
+  for _, e in ipairs(entries) do
+    sumW, sumWS = sumW + e.weight, sumWS + e.weight * e.stars
   end
 
   local stars = nil
@@ -561,8 +720,8 @@ function M.summary(db, target, kind)
   return {
     stars = stars,
     score = (C.PRIOR_WEIGHT * C.PRIOR_MEAN + sumWS) / (C.PRIOR_WEIGHT + sumW),
-    count = kind == "trust" and distinct or used,
-    isNew = used + deaths < C.NEW_BELOW,
+    count = kind == "trust" and distinct or ratings,
+    isNew = directRatings + heavyDeaths < C.NEW_BELOW,
     deathsReported = deaths,
   }
 end
@@ -591,7 +750,7 @@ end
 --   * the heavy deaths, as kind "death" (rater and other are the victim);
 --   * when the target is me, my own ride logs, as kind "ridelog" (other is
 --     the traveler).
--- Liars' records are not passed on. Reading creates nothing.
+-- Liars' records and malformed rows are not passed on. Reading creates nothing.
 function M.replyRecords(db, target, me, max)
   local out = {}
   local name = not db._newer and nameOf(target) or nil
@@ -604,39 +763,25 @@ function M.replyRecords(db, target, me, max)
 
   for kind in pairs(KINDS) do
     for _, r in ipairs(stored(db, name, kind)) do
-      if
-        isDirect(r)
-        and isStars(r.stars)
-        and nonEmptyString(r.rater)
-        and nonEmptyString(r.id)
-        and finite(r.ts)
-        and not isLiar(db, r.rater)
-      then
-        out[#out + 1] = {
-          kind = kind, rater = r.rater, stars = r.stars, id = r.id, ts = r.ts,
-          owed = r.owed, received = r.received, pct = r.pct,
-        }
+      if validRating(r, kind) and r.via == nil and not isLiar(db, r.rater) then
+        local rec = { kind = kind, rater = r.rater, stars = r.stars, id = r.id, ts = r.ts }
+        if kind == "share" then
+          rec.owed, rec.received, rec.pct = r.owed, r.received, r.pct
+        end
+        out[#out + 1] = rec
       end
     end
   end
 
-  local deaths = sub(db, "deaths", name)
-  for id, d in pairs(deaths) do
-    if
-      type(d) == "table"
-      and d.heavy == true
-      and nonEmptyString(d.victim)
-      and finite(d.ts)
-      and nonEmptyString(id)
-      and deathWeight(db, d)
-    then
+  for id, d in pairs(sub(db, "deaths", name)) do
+    if nonEmptyString(id) and type(d) == "table" and d.heavy == true and deathStanding(db, d) then
       out[#out + 1] = { kind = "death", rater = d.victim, id = id, ts = d.ts, other = d.victim }
     end
   end
 
   if ns.Names.same(target, me) then
     for id, log in pairs(sub(db, "rideLogs", name)) do
-      if type(log) == "table" and nonEmptyString(id) and finite(log.ts) then
+      if nonEmptyString(id) and type(log) == "table" and finite(log.ts) and nonEmptyString(log.traveler) then
         out[#out + 1] = { kind = "ridelog", rater = name, id = id, ts = log.ts, other = log.traveler }
       end
     end

@@ -293,6 +293,57 @@ describe("Store", function()
       assert.are.same({ { rater = "second", ts = 5 }, { rater = "third", ts = 5 } }, l)
     end)
 
+    it("drops relayed records before direct ones, oldest first within each group", function()
+      ns.Config.RATING.CAP_PER_KIND = 3
+      local db = S.init(nil)
+      local l = S.ratingList(db, "X", "trust")
+      l[1] = { rater = "d5", ts = 5 }
+      l[2] = { rater = "d1", ts = 1 }
+      l[3] = { rater = "r2", ts = 2, via = { ["Rel Ay"] = true } }
+      l[4] = { rater = "r9", ts = 9, via = { ["Rel Ay"] = true } }
+      l[5] = { rater = "r3", ts = 3, via = { ["Rel Ay"] = true } }
+      S.prune(db)
+      assert.are.equal(3, #l)
+      -- The relayed ts 2 and ts 3 go; what stays is ordered oldest to newest.
+      assert.are.same({ "d1", "d5", "r9" }, { l[1].rater, l[2].rater, l[3].rater })
+    end)
+
+    it("keeps an old direct record when newer relayed ones fill the list", function()
+      ns.Config.RATING.CAP_PER_KIND = 3
+      local db = S.init(nil)
+      local l = S.ratingList(db, "X", "trust")
+      l[1] = { rater = "direct", ts = 1 }
+      for i = 1, 5 do
+        l[#l + 1] = { rater = "relayed" .. i, ts = 10 + i, via = { ["Rel Ay"] = true } }
+      end
+      S.prune(db)
+      assert.are.same({ "direct", "relayed4", "relayed5" }, { l[1].rater, l[2].rater, l[3].rater })
+    end)
+
+    it("drops the oldest direct records once no relayed ones are left", function()
+      ns.Config.RATING.CAP_PER_KIND = 1
+      local db = S.init(nil)
+      local l = S.ratingList(db, "X", "trust")
+      l[1] = { rater = "d5", ts = 5 }
+      l[2] = { rater = "d1", ts = 1 }
+      l[3] = { rater = "r2", ts = 2, via = { ["Rel Ay"] = true } }
+      S.prune(db)
+      assert.are.same({ { rater = "d5", ts = 5 } }, l)
+    end)
+
+    it("keeps the real record when 500 relayed ones dated far ahead arrive", function()
+      local db = S.init(nil)
+      local l = S.ratingList(db, "X", "trust")
+      l[1] = { rater = "real", stars = 1, ts = 100 }
+      for i = 1, 500 do
+        l[#l + 1] = { rater = "fake" .. i, stars = 5, ts = 2e9 + i, via = { ["Rel Ay"] = true } }
+      end
+      S.prune(db)
+      assert.are.equal(500, #l)
+      assert.are.equal("real", l[1].rater)
+      assert.are.equal("fake2", l[2].rater, "the oldest relayed record went")
+    end)
+
     it("walks every target and both kinds", function()
       ns.Config.RATING.CAP_PER_KIND = 2
       local db = S.init(nil)

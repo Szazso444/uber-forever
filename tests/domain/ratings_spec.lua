@@ -362,16 +362,16 @@ describe("Ratings", function()
       assert.are.equal(1, #trustList())
     end)
 
-    it("keeps the first relayed version when another has different stars, with no strike", function()
+    it("keeps the lower-stars relayed version when another has different stars, with no strike", function()
       assert.is_true(R.addRelayed(db, trust("Dan Eve", 5, "r1"), "Rel Ay"))
-      local ok, why = R.addRelayed(db, trust("Dan Eve", 1, "r1"), "Rel Bee")
+      assert.is_true(R.addRelayed(db, trust("Dan Eve", 1, "r1"), "Rel Bee"))
+      local ok, why = R.addRelayed(db, trust("Dan Eve", 3, "r1"), "Rel Cee")
       assert.is_nil(ok)
       assert.are.equal("conflict", why)
-      assert.is_nil(db.strikes["Rel Ay"])
-      assert.is_nil(db.strikes["Rel Bee"])
+      assert.are.same({}, db.strikes)
       assert.are.equal(1, #trustList())
-      assert.are.equal(5, trustList()[1].stars)
-      assert.are.same({ ["Rel Ay"] = true }, trustList()[1].via)
+      assert.are.equal(1, trustList()[1].stars)
+      assert.are.same({ ["Rel Bee"] = true }, trustList()[1].via)
     end)
 
     it("keeps one relayed record per rater and day", function()
@@ -940,6 +940,423 @@ describe("Ratings", function()
       assert.are.same({}, R.replyRecords(db, nil, "Ana Smith", 50))
       assert.are.same(before, db)
       assert.is_nil(db.ratings["Nobody Here"])
+    end)
+  end)
+
+  describe("tamper resistance", function()
+    local NOW = T0 + 10 * DAY
+
+    -- n invented ratings, each by a made-up rater, all passed on by one relayer.
+    local function flood(relayer, n, stars)
+      for i = 1, n do
+        assert.is_true(R.addRelayed(db, trust("Fake " .. i, stars or 5, "f" .. i), relayer))
+      end
+    end
+
+    local function rideLog(id, traveler)
+      assert.is_true(R.addRideLog(db, "Ana Smith", id, T0, traveler))
+    end
+
+    describe("relayed weight is capped (R23)", function()
+      it("one relayer's 50 invented 5 star ratings count 0.5 in all and leave the warlock New", function()
+        flood("Rel Ay", 50)
+        local s = trustSummary()
+        assert.is_true(s.isNew)
+        near(5, s.stars, "stars")
+        near((5 * 3.5 + 0.5 * 5) / (5 + 0.5), s.score, "score")
+      end)
+
+      it("never lets relayed ratings or receipts clear New", function()
+        for i, relayer in ipairs({ "Rel Ay", "Rel Bee", "Rel Cee", "Rel Dee", "Rel Eee" }) do
+          assert.is_true(R.addRelayed(db, trust("Fake " .. i, 5, "f" .. i), relayer))
+          assert.is_true(R.addReceipt(db, "Ana Smith", "x" .. i, T0))
+        end
+        local s = trustSummary()
+        assert.is_true(s.isNew)
+        near((5 * 3.5 + 5 * 0.2 * 5) / (5 + 5 * 0.2), s.score, "five separate relayers are under both caps")
+      end)
+
+      it("clears New only with direct ratings and heavy deaths", function()
+        flood("Rel Ay", 10)
+        for i = 1, 3 do
+          assert.is_true(direct(trust("Rater " .. i, 4, "r" .. i)))
+        end
+        assert.is_true(R.addDeath(db, { target = "Ana Smith", victim = "Cal Dunn", id = "d1", ts = T0, heavy = true }))
+        assert.is_true(R.addDeath(db, {
+          target = "Ana Smith", victim = "Dan Eve", id = "d2", ts = T0, heavy = false, via = { ["Rel Bee"] = true },
+        }))
+        assert.is_true(trustSummary().isNew, "3 direct ratings + 1 heavy death is 4")
+        assert.is_true(direct(trust("Rater 4", 4, "r4")))
+        assert.is_false(trustSummary().isNew, "5 direct ratings or heavy deaths")
+      end)
+
+      it("clears a share warlock's New with direct share ratings only", function()
+        for i = 1, 10 do
+          assert.is_true(R.addRelayed(db, share("Fake " .. i, 5, "f" .. i), "Rel Ay"))
+        end
+        for i = 1, 4 do
+          assert.is_true(direct(share("Rater " .. i, 4, "r" .. i)))
+        end
+        assert.is_true(shareSummary().isNew)
+        assert.is_true(direct(share("Rater 5", 4, "r5")))
+        assert.is_false(shareSummary().isNew)
+      end)
+
+      it("keeps a warlock with two heavy deaths below 2.0 after a 50 record reply", function()
+        assert.is_true(R.addDeath(db, { target = "Ana Smith", victim = "Cal Dunn", id = "d1", ts = T0, heavy = true }))
+        assert.is_true(R.addDeath(db, { target = "Ana Smith", victim = "Dan Eve", id = "d2", ts = T0, heavy = true }))
+        flood("Rel Ay", 50)
+        local s = trustSummary()
+        assert.is_true(s.score < 2.0, "score " .. s.score)
+        near((5 * 3.5 + 10 * 1 + 0.5 * 5) / (5 + 10 + 0.5), s.score, "score")
+        assert.is_true(s.isNew)
+      end)
+
+      it("caps ten relayers at 2.0 in total", function()
+        for r = 1, 10 do
+          for i = 1, 10 do
+            assert.is_true(R.addRelayed(db, trust("Ring " .. r .. " " .. i, 5, "g" .. r .. "_" .. i), "Relayer " .. r))
+          end
+        end
+        near((5 * 3.5 + 2.0 * 5) / (5 + 2.0), trustSummary().score, "score")
+        assert.is_true(trustSummary().isNew)
+      end)
+
+      it("counts light relayed deaths inside the same caps", function()
+        for i = 1, 10 do
+          assert.is_true(R.addDeath(db, {
+            target = "Ana Smith", victim = "Victim " .. i, id = "d" .. i, ts = T0, heavy = false, via = { ["Rel Ay"] = true },
+          }))
+        end
+        local s = trustSummary()
+        near((5 * 3.5 + 0.5 * 1) / (5 + 0.5), s.score, "score")
+        assert.are.equal(10, s.deathsReported)
+        assert.is_true(s.isNew)
+      end)
+
+      it("gives a relayer one 0.5 budget for its ratings and its deaths together", function()
+        for i = 1, 5 do
+          assert.is_true(R.addRelayed(db, trust("Fake " .. i, 5, "f" .. i), "Rel Ay"))
+          assert.is_true(R.addDeath(db, {
+            target = "Ana Smith", victim = "Victim " .. i, id = "d" .. i, ts = T0, heavy = false, via = { ["Rel Ay"] = true },
+          }))
+        end
+        local s = trustSummary()
+        near(3.0, s.stars, "stars: the ratings and the deaths each get 0.25")
+        near((5 * 3.5 + 0.25 * 5 + 0.25 * 1) / (5 + 0.5), s.score, "score")
+      end)
+
+      it("splits a corroborated record's 0.5 equally among its relayers", function()
+        for i = 1, 10 do
+          for _, relayer in ipairs({ "Rel Ay", "Rel Bee", "Rel Cee" }) do
+            assert.is_true(R.addRelayed(db, trust("Fake " .. i, 5, "f" .. i), relayer))
+          end
+        end
+        -- Each relayer carries 10 * 0.5 / 3 = 1.667, scaled to 0.5, so every record weighs 0.15.
+        near((5 * 3.5 + 1.5 * 5) / (5 + 1.5), trustSummary().score, "score")
+      end)
+
+      it("caps trust and share separately", function()
+        flood("Rel Ay", 50)
+        for i = 1, 50 do
+          assert.is_true(R.addRelayed(db, share("Fake " .. i, 5, "f" .. i), "Rel Ay"))
+        end
+        near((5 * 3.5 + 0.5 * 5) / (5 + 0.5), trustSummary().score, "trust")
+        near((5 * 3.5 + 0.5 * 5) / (5 + 0.5), shareSummary().score, "share")
+      end)
+    end)
+
+    describe("a warlock cannot relay about itself (R24)", function()
+      it("rejects a relayer who is the target", function()
+        for _, relayer in ipairs({ "Ana Smith", " Ana  Smith " }) do
+          local ok, why = R.addRelayed(db, trust("Dan Eve", 5, "r1"), relayer)
+          assert.is_nil(ok)
+          assert.are.equal("bad_record", why)
+        end
+        assert.is_nil(db.ratings["Ana Smith"])
+      end)
+    end)
+
+    describe("timestamps are checked and one-sided ratings are capped (R25)", function()
+      it("rejects a rating dated more than 300 seconds ahead as future", function()
+        local ok, why = R.addDirect(db, trust("Bob Jones", 5, "r1", NOW + 301), "Bob Jones", NOW)
+        assert.is_nil(ok)
+        assert.are.equal("future", why)
+        ok, why = R.addRelayed(db, trust("Dan Eve", 5, "r2", NOW + 301), "Rel Ay", NOW)
+        assert.is_nil(ok)
+        assert.are.equal("future", why)
+        ok, why = R.give(db, trust("Bob Jones", 5, "r3", NOW + 301), NOW)
+        assert.is_nil(ok)
+        assert.are.equal("future", why)
+        assert.are.same({}, db.given)
+        assert.is_nil(db.ratings["Ana Smith"])
+      end)
+
+      it("rejects a death, ride log or receipt dated ahead", function()
+        local ok, why = R.addDeath(db, { target = "Ana Smith", victim = "Cal Dunn", id = "d1", ts = NOW + 301, heavy = true }, NOW)
+        assert.is_nil(ok)
+        assert.are.equal("future", why)
+        ok, why = R.addRideLog(db, "Ana Smith", "r1", NOW + 301, "Bob Jones", NOW)
+        assert.is_nil(ok)
+        assert.are.equal("future", why)
+        ok, why = R.addReceipt(db, "Ana Smith", "r1", NOW + 301, NOW)
+        assert.is_nil(ok)
+        assert.are.equal("future", why)
+        assert.are.same({}, db.deaths)
+        assert.are.same({}, db.rideLogs)
+        assert.are.same({}, db.receipts)
+      end)
+
+      it("accepts a timestamp up to 300 seconds ahead, and any when no clock is given", function()
+        assert.is_true(R.addDirect(db, trust("Bob Jones", 5, "r1", NOW + 300), "Bob Jones", NOW))
+        assert.is_true(R.addRelayed(db, trust("Dan Eve", 5, "r2", NOW + 300), "Rel Ay", NOW))
+        assert.is_true(R.give(db, trust("Cal Dunn", 5, "r3", NOW + 300), NOW))
+        assert.is_true(R.addDeath(db, { target = "Ana Smith", victim = "Cal Dunn", id = "d1", ts = NOW + 300, heavy = true }, NOW))
+        assert.is_true(R.addRideLog(db, "Ana Smith", "r1", NOW + 300, "Bob Jones", NOW))
+        assert.is_true(R.addReceipt(db, "Ana Smith", "r1", NOW + 300, NOW))
+        assert.is_true(direct(trust("Eve Gray", 5, "r4", NOW + 100 * DAY)))
+        assert.is_true(R.addRelayed(db, trust("Fay Moss", 5, "r5", NOW + 100 * DAY), "Rel Ay"))
+      end)
+
+      it("rejects 500 relayed ratings dated 50 years ahead", function()
+        for i = 1, 500 do
+          local ok, why = R.addRelayed(db, trust("Fake " .. i, 5, "f" .. i, NOW + 50 * 365 * DAY + i), "Rel Ay", NOW)
+          assert.is_nil(ok)
+          assert.are.equal("future", why)
+        end
+        assert.is_nil(db.ratings["Ana Smith"])
+      end)
+
+      it("counts only the newest of one rater's one-sided ratings", function()
+        -- One alt sends 30 ratings backdated over 30 days, then an honest two-sided 1 star arrives.
+        for i = 1, 30 do
+          assert.is_true(direct(trust("Evil Alt", 5, "a" .. i, T0 - i * DAY)))
+        end
+        rideLog("h1", "Bob Jones")
+        assert.is_true(direct(trust("Bob Jones", 1, "h1")))
+        assert.are.equal(31, #trustList(), "all of them are kept")
+        local s = trustSummary()
+        near(round1((0.3 * 5 + 1.0 * 1) / 1.3), s.stars, "stars")
+        near(1.9, s.stars, "stars")
+        near((5 * 3.5 + 0.3 * 5 + 1.0 * 1) / (5 + 1.3), s.score, "score")
+        assert.are.equal(2, s.count)
+        assert.is_true(s.isNew)
+      end)
+
+      it("lets 30 backdated one-sided ratings from one alt neither clear New nor lift the score", function()
+        for i = 1, 30 do
+          assert.is_true(direct(trust("Evil Alt", 5, "a" .. i, T0 - i * DAY)))
+        end
+        local s = trustSummary()
+        near((5 * 3.5 + 0.3 * 5) / (5 + 0.3), s.score, "score")
+        assert.is_true(s.isNew)
+      end)
+
+      it("counts the newest of them, whichever order they arrive in", function()
+        assert.is_true(direct(trust("Evil Alt", 1, "a1", T0 + DAY)))
+        assert.is_true(direct(trust("Evil Alt", 5, "a2", T0)))
+        assert.are.equal(1, trustSummary().stars)
+        db.ratings["Ana Smith"].trust[1].ts = T0 - DAY
+        assert.are.equal(5, trustSummary().stars)
+      end)
+
+      it("counts each of a rater's two-sided ratings, one per real ride", function()
+        rideLog("h1", "Bob Jones")
+        rideLog("h2", "Bob Jones")
+        assert.is_true(direct(trust("Bob Jones", 5, "h1", T0)))
+        assert.is_true(direct(trust("Bob Jones", 3, "h2", T0 + DAY)))
+        assert.is_true(direct(trust("Bob Jones", 1, "h3", T0 + 2 * DAY)))
+        local s = trustSummary()
+        near(round1((5 + 3 + 0.3 * 1) / 2.3), s.stars, "stars")
+        assert.are.equal(3, s.count)
+      end)
+
+      it("does not apply the one-sided cap to share ratings", function()
+        assert.is_true(direct(share("Cal Dunn", 5, "a1", T0)))
+        assert.is_true(direct(share("Cal Dunn", 3, "a2", T0 + DAY)))
+        near(4.0, shareSummary().stars, "stars")
+        assert.are.equal(2, shareSummary().count)
+      end)
+    end)
+
+    describe("a conflicting relayed version keeps the lower stars (R26)", function()
+      it("lets three honest 1 star relays replace an instant 5 star relay", function()
+        assert.is_true(R.addRelayed(db, trust("Real Rater", 5, "r1"), "Evil Rel"))
+        for _, relayer in ipairs({ "Rel Bee", "Rel Cee", "Rel Dee" }) do
+          assert.is_true(R.addRelayed(db, trust("Real Rater", 1, "r1"), relayer))
+        end
+        assert.are.equal(1, #trustList())
+        assert.are.equal(1, trustList()[1].stars)
+        assert.are.same({ ["Rel Bee"] = true, ["Rel Cee"] = true, ["Rel Dee"] = true }, trustList()[1].via)
+        assert.are.same({}, db.strikes)
+        assert.are.equal(1, trustSummary().stars)
+      end)
+
+      it("keeps the 1 star version when the 5 star one arrives second", function()
+        assert.is_true(R.addRelayed(db, trust("Real Rater", 1, "r1"), "Rel Bee"))
+        local ok, why = R.addRelayed(db, trust("Real Rater", 5, "r1"), "Evil Rel")
+        assert.is_nil(ok)
+        assert.are.equal("conflict", why)
+        assert.are.equal(1, trustList()[1].stars)
+        assert.are.same({ ["Rel Bee"] = true }, trustList()[1].via)
+        assert.are.same({}, db.strikes)
+      end)
+
+      it("keeps the existing version on equal stars, merging only an exact match", function()
+        assert.is_true(R.addRelayed(db, trust("Real Rater", 4, "r1", T0), "Rel Ay"))
+        local ok, why = R.addRelayed(db, trust("Real Rater", 4, "r1", T0 + 60), "Rel Bee")
+        assert.is_nil(ok)
+        assert.are.equal("conflict", why)
+        assert.are.same({ ["Rel Ay"] = true }, trustList()[1].via)
+        assert.is_true(R.addRelayed(db, trust("Real Rater", 4, "r1", T0), "Rel Cee"))
+        assert.are.same({ ["Rel Ay"] = true, ["Rel Cee"] = true }, trustList()[1].via)
+        assert.are.equal(1, #trustList())
+      end)
+
+      it("applies the lower-stars rule to the one-per-day slot too", function()
+        assert.is_true(R.addRelayed(db, trust("Real Rater", 5, "r1", T0), "Evil Rel"))
+        assert.is_true(R.addRelayed(db, trust("Real Rater", 1, "r2", T0 + 60), "Rel Bee"))
+        assert.are.equal(1, #trustList())
+        assert.are.equal("r2", trustList()[1].id)
+        local ok, why = R.addRelayed(db, trust("Real Rater", 3, "r3", T0 + 120), "Rel Cee")
+        assert.is_nil(ok)
+        assert.are.equal("conflict", why)
+        assert.are.equal("r2", trustList()[1].id)
+        assert.are.same({}, db.strikes)
+      end)
+    end)
+
+    describe("strikes need proof that a copy was altered (R27)", function()
+      it("does not strike the relayer of an older copy when the rater re-rates", function()
+        assert.is_true(R.addRelayed(db, trust("Bob Jones", 5, "r1", T0), "Rel Ay"))
+        assert.is_true(direct(trust("Bob Jones", 1, "r1", T0 + 100)))
+        assert.are.same({}, db.strikes)
+        assert.are.equal(1, #trustList())
+        assert.is_nil(trustList()[1].via)
+        assert.are.equal(1, trustSummary().stars)
+      end)
+
+      it("does not strike the relayer of a copy dated after the direct rating, and keeps the direct one", function()
+        assert.is_true(R.addRelayed(db, trust("Bob Jones", 5, "r1", T0 + 100), "Rel Ay"))
+        assert.is_true(direct(trust("Bob Jones", 1, "r1", T0)))
+        assert.are.same({}, db.strikes)
+        assert.are.equal(1, #trustList())
+        assert.is_nil(trustList()[1].via)
+        assert.are.equal(1, trustList()[1].stars)
+      end)
+
+      it("does not strike a relayer whose copy differs from the direct one in time", function()
+        assert.is_true(direct(trust("Bob Jones", 1, "r1", T0)))
+        for _, ts in ipairs({ T0 + 100, T0 - 100 }) do
+          local ok, why = R.addRelayed(db, trust("Bob Jones", 5, "r1", ts), "Rel Ay")
+          assert.is_nil(ok)
+          assert.are.equal("has_direct", why)
+        end
+        assert.are.same({}, db.strikes)
+      end)
+
+      it("strikes only a copy with the same id and the same ts but different stars", function()
+        assert.is_true(R.addRelayed(db, trust("Bob Jones", 5, "r1", T0), "Rel Ay"))
+        assert.is_true(direct(trust("Bob Jones", 1, "r1", T0)))
+        assert.are.equal(1, db.strikes["Rel Ay"])
+        local ok, why = R.addRelayed(db, trust("Bob Jones", 5, "r1", T0), "Rel Bee")
+        assert.is_nil(ok)
+        assert.are.equal("contradicts_direct", why)
+        assert.are.equal(1, db.strikes["Rel Bee"])
+      end)
+    end)
+
+    describe("full weight needs a ride log that names the rater (R22)", function()
+      it("gives five alts rating a public ride id 0.3 each, not 1.0", function()
+        rideLog("r1", "Bob Jones")
+        for i = 1, 5 do
+          assert.is_true(direct(trust("Alt " .. i, 1, "r1")))
+        end
+        local s = trustSummary()
+        near(1, s.stars, "stars")
+        near((5 * 3.5 + 5 * 0.3 * 1) / (5 + 5 * 0.3), s.score, "score")
+      end)
+
+      it("still counts the traveler the log names at 1.0", function()
+        rideLog("r1", "Bob Jones")
+        assert.is_true(direct(trust("Bob Jones", 5, "r1")))
+        assert.is_true(direct(trust("Alt 1", 1, "r1")))
+        near(round1((5 * 1.0 + 1 * 0.3) / 1.3), trustSummary().stars, "stars")
+      end)
+
+      it("takes a log with no traveler, or one that is not a table, as one-sided", function()
+        db.rideLogs["Ana Smith"] = { r1 = { ts = T0 }, r2 = "Bob Jones" }
+        assert.is_true(direct(trust("Bob Jones", 5, "r1")))
+        assert.is_true(direct(trust("Cal Dunn", 5, "r2")))
+        near((5 * 3.5 + 0.6 * 5) / (5 + 0.6), trustSummary().score, "score")
+      end)
+    end)
+
+    describe("hand-edited stored rows", function()
+      local function mess()
+        db.ratings["Ana Smith"] = {
+          trust = {
+            { rater = "Bob Jones", stars = 5, ts = T0 },
+            { rater = "Cal Dunn", stars = 5, id = "r2", ts = 0 / 0 },
+            { rater = "Dan Eve", stars = 9, id = "r3", ts = T0 },
+            "junk",
+            42,
+            { rater = "Eve Gray", stars = 5, id = "r5", ts = T0, via = "Rel Ay" },
+            { stars = 5, id = "r6", ts = T0 },
+            { rater = "Gus Hill", stars = 5, id = "r7", ts = math.huge },
+            { rater = "Fay Moss", stars = 2, id = "r8", ts = T0 },
+          },
+          share = {
+            { rater = "Cal Dunn", stars = 4, id = "s1", ts = T0, owed = -1 },
+            { rater = "Dan Eve", stars = 4, id = "s2", ts = T0, received = 0 / 0 },
+            { rater = "Eve Gray", stars = 4, id = "s3", ts = T0, pct = "25" },
+            { rater = "Fay Moss", stars = 4, id = 5, ts = T0 },
+            { rater = "Gus Hill", stars = 4, id = "s5", ts = T0, owed = 100, received = 90, pct = 25 },
+          },
+        }
+        db.deaths["Ana Smith"] = {
+          d1 = "junk",
+          d2 = { victim = "", ts = T0, heavy = true },
+          d3 = { victim = "Hal Ward", ts = "x", heavy = true },
+          d4 = { victim = "Ira Cole", ts = T0, heavy = true, via = "Rel Ay" },
+          d5 = { victim = "Jay Park", ts = T0, heavy = true },
+        }
+        db.rideLogs["Ana Smith"] = {
+          l1 = "x", l2 = { ts = "bad", traveler = 7 }, l3 = { ts = T0, traveler = 7 }, l4 = { ts = T0, traveler = "Kay Lane" },
+        }
+        db.receipts["Ana Smith"] = { [5] = T0, r9 = T0 }
+      end
+
+      it("are skipped by summary", function()
+        mess()
+        local trustS, shareS
+        assert.has_no.errors(function()
+          trustS = trustSummary()
+          shareS = shareSummary()
+        end)
+        near(round1((0.3 * 2 + 5 * 1) / 5.3), trustS.stars, "trust stars: Fay Moss and the one good death")
+        assert.are.equal(1, trustS.deathsReported)
+        assert.are.equal(3, trustS.count, "r8, d5 and the receipt r9")
+        near(4.0, shareS.stars, "share stars")
+        assert.are.equal(1, shareS.count)
+      end)
+
+      it("are skipped by replyRecords, which leaves records Protocol can encode", function()
+        mess()
+        local recs
+        assert.has_no.errors(function()
+          recs = R.replyRecords(db, "Ana Smith", "Ana Smith", 50)
+        end)
+        local ids = {}
+        for _, rec in ipairs(recs) do
+          ids[#ids + 1] = rec.kind .. ":" .. rec.id
+        end
+        table.sort(ids)
+        assert.are.same({ "death:d5", "ridelog:l4", "share:s5", "trust:r8" }, ids)
+        assert.has_no.errors(function()
+          ns.Protocol.encode("QUERY_R", "m1", { target = "Ana Smith", records = recs })
+        end)
+      end)
     end)
   end)
 

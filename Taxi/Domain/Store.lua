@@ -98,8 +98,18 @@ local function oldestFirst(a, b)
   return a.idx < b.idx
 end
 
--- Drop the oldest records of list, in place, until at most cap are left. What
--- stays is ordered oldest to newest.
+-- The order records are dropped in: relayed ones (non-nil `via`, second-hand
+-- and cheap to forge) before direct ones, oldest first within each group.
+local function droppedFirst(a, b)
+  if a.relayed ~= b.relayed then
+    return a.relayed
+  end
+  return oldestFirst(a, b)
+end
+
+-- Drop records of list, in place, until at most cap are left: relayed ones
+-- before direct ones, the oldest first within each. What stays is ordered
+-- oldest to newest.
 local function trim(list, cap)
   local n = #list
   if n <= cap then
@@ -107,21 +117,32 @@ local function trim(list, cap)
   end
   local ranked = {}
   for i = 1, n do
-    ranked[i] = { record = list[i], ts = timestamp(list[i]), idx = i }
+    local record = list[i]
+    ranked[i] = {
+      record = record,
+      ts = timestamp(record),
+      idx = i,
+      relayed = type(record) == "table" and record.via ~= nil,
+    }
   end
-  table.sort(ranked, oldestFirst)
-  local dropped = n - cap
+  table.sort(ranked, droppedFirst)
+  local kept = {}
+  for i = n - cap + 1, n do
+    kept[#kept + 1] = ranked[i]
+  end
+  table.sort(kept, oldestFirst)
   for i = 1, cap do
-    list[i] = ranked[dropped + i].record
+    list[i] = kept[i].record
   end
   for i = cap + 1, n do
     list[i] = nil
   end
 end
 
--- Cap every warlock's trust and share lists at RATING.CAP_PER_KIND, oldest
--- first. Nothing else is pruned: `given` in particular is kept for good. A
--- newer db is not touched.
+-- Cap every warlock's trust and share lists at RATING.CAP_PER_KIND, dropping
+-- relayed records before direct ones and the oldest first within each. Nothing
+-- else is pruned: `given` in particular is kept for good. A newer db is not
+-- touched.
 function M.prune(db)
   if db._newer then
     return
