@@ -135,6 +135,53 @@ describe("summon flow", function()
     lock.engine:acceptRequest("Tra Veler#"..s.standId); w:advance(2)
     assert.are.same({"STATUS", "STATUS_LEAVE_GROUP", "Leave your group so the driver can invite you."}, last(t, "STATUS"))
     assert.is_false(w:acceptInvite("Tra Veler")) -- the game refuses the invite while grouped
+    -- The traveler leaves that group and the driver invites again, which starts the 60 s wait over.
+    local key = "Tra Veler#"..s.standId
+    t.engine:leaveGroup(); w:advance(40)
+    assert.is_true(lock.engine:reinvite(key))
+    w:advance(40) -- 80 s after the accept: still waiting
+    assert.are.equal("accepted", lock.engine.rides[key].state)
+    assert.is_true(w:acceptInvite("Tra Veler")); w:advance(1)
+    assert.are.equal("grouped", lock.engine.rides[key].state)
+    assert.are.equal("grouped", t.engine.rides[key].state)
+    assert.are.same({nil, "unknown_ride"}, {lock.engine:reinvite(key)}) -- in the group already
+    assert.are.same({nil, "unknown_ride"}, {lock.engine:reinvite("Nob Ody#"..s.standId)})
+  end)
+
+  it("accepting the warlock's summon is an arrival wherever it lands, flagged as the wrong place (R43)", function()
+    local s = crewUp()
+    local key = "Tra Veler#"..s.standId
+    t.engine:requestRide(s.standId, 0); w:advance(2)
+    lock.engine:acceptRequest(key); w:advance(2); w:acceptInvite("Tra Veler"); w:advance(2)
+    w:moveTo("Dar Kbolt", "searing"); w:offerSummon("Dar Kbolt", "Tra Veler"); w:advance(1)
+    assert.are.equal("RED", last(t, "GUARD_VERDICT")[2].level)
+    w:acceptSummon("Tra Veler") -- against the guard's advice
+    local ride = t.engine.rides[key]
+    assert.are.same({"ARRIVED", ride}, last(t, "ARRIVED"))
+    assert.are.equal("arrived", ride.state)
+    assert.is_true(ride.wrongPlace)
+    w:advance(30)
+    w:kill("Tra Veler"); w:advance(1)
+    for _, p in ipairs{lock, c1, c2, t} do
+      local death = p.db.deaths["Dar Kbolt"] and p.db.deaths["Dar Kbolt"][ride.rideId]
+      assert.is_true(death and death.heavy, p.name)
+    end
+  end)
+
+  it("a summon from someone else during a live ride is judged against that ride: RED (R45)", function()
+    local s = crewUp()
+    local key = "Tra Veler#"..s.standId
+    t.engine:requestRide(s.standId, 0); w:advance(2)
+    lock.engine:acceptRequest(key); w:advance(2); w:acceptInvite("Tra Veler"); w:advance(2)
+    w:offerSummon("Cee One", "Tra Veler"); w:advance(1)
+    local v, ride = last(t, "GUARD_VERDICT")[2], last(t, "GUARD_VERDICT")[3]
+    assert.are.equal("RED", v.level)
+    assert.are.equal("summoner", v.checks[1].id)
+    assert.are.equal("Summoner: Cee One (agreed: Dar Kbolt)", v.checks[1].text)
+    assert.are.equal(t.engine.rides[key], ride)
+    assert.are.equal("grouped", ride.state) -- not the ride's summon: the ride doesn't move
+    w:acceptSummon("Tra Veler")
+    assert.are.same({}, emitted(t, "ARRIVED")) -- and taking it is no arrival of this ride
   end)
 
   it("pays the clickers their share: payout list, Pay, and a 5-star prefill when paid in full", function()
@@ -355,6 +402,70 @@ describe("Driver", function()
     assert.are.same({{clicker = "Cee One", owed = 2500, received = 0}}, lock.engine:payoutList())
   end)
 
+  it("drops a clicker who agreed but didn't join the group within 60 s", function()
+    local c1 = add("Cee One", {place = "gadgetzan"})
+    local s = lock.engine:openStand{kind = "lock"}
+    assert.is_true(c1.engine:applyClicker(s.standId, 25)); w:advance(2)
+    assert.is_true(lock.engine:respondClicker("Cee One", "ACCEPT"))
+    w:advance(59)
+    assert.is_truthy(s.clickers["Cee One"])
+    w:advance(2)
+    assert.is_nil(s.clickers["Cee One"])
+    assert.are.equal("recruiting", ns.Stand.status(s))
+    assert.is_number(lock.engine.ledgers[s.standId].shifts["Cee One"].leaveTs)
+    local no = wireOf(ns, w, "CLICK_NO", "Dar Kbolt")
+    assert.are.same({s.standId, "WHISPER", "Cee One"}, {no[1].standId, no[1].dist, no[1].to})
+    assert.is_nil(c1.engine.shift)
+    assert.are.equal(1, #emitted(c1, "SHIFT_ENDED"))
+  end)
+
+  it("keeps a clicker who joined in time", function()
+    add("Cee One", {place = "gadgetzan"}).engine:applyClicker(lock.engine:openStand{kind = "lock"}.standId, 25)
+    w:advance(2)
+    lock.engine:respondClicker("Cee One", "ACCEPT"); w:advance(30)
+    assert.is_true(w:acceptInvite("Cee One")); w:advance(40)
+    assert.is_truthy(lock.engine.stand.clickers["Cee One"])
+    assert.are.same({}, wireOf(ns, w, "CLICK_NO"))
+  end)
+
+  it("ignores messages from players who aren't part of the ride, the talk or the stand", function()
+    local c1 = add("Cee One", {place = "gadgetzan"})
+    add("Mal Ory")
+    local s = lock.engine:openStand{kind = "lock"}; w:advance(1)
+    local mine = grouped(t, s)
+    local function hear(sender, msgType, fields, dist)
+      lock.engine:handle(assert(ns.Protocol.decode(ns.Protocol.encode(msgType, "t1", fields))), sender, dist or "WHISPER")
+    end
+    local requests, applied = #emitted(lock, "REQUEST_RECEIVED"), #emitted(lock, "CLICKER_APPLIED")
+    -- An ARRIVED for my ride, but not from its traveler: no arrival, no ride log.
+    hear("Mal Ory", "ARRIVED", {rideId = mine.rideId, warlock = "Dar Kbolt"}, "CHANNEL")
+    assert.are.equal("grouped", mine.state)
+    assert.is_nil(lock.db.rideLogs["Dar Kbolt"])
+    -- A request or an application for a stand id that isn't mine.
+    hear("Mal Ory", "REQUEST", {standId = "Dar Kbolt@1", offer = 0, level = 30})
+    hear("Mal Ory", "CLICK_APPLY", {standId = "Dar Kbolt@1", askedPct = 25})
+    assert.are.equal(requests, #emitted(lock, "REQUEST_RECEIVED"))
+    assert.are.equal(applied, #emitted(lock, "CLICKER_APPLIED"))
+    -- Cee One's talk is countered; others can't take or drop it.
+    assert.is_true(c1.engine:applyClicker(s.standId, 30)); w:advance(2)
+    assert.is_true(lock.engine:respondClicker("Cee One", "COUNTER", 20))
+    hear("Mal Ory", "CLICK_OK", {standId = s.standId, agreedPct = 20})
+    hear("Mal Ory", "CLICK_NO", {standId = s.standId})
+    hear("Cee One", "CLICK_OK", {standId = "Dar Kbolt@1", agreedPct = 20})
+    assert.is_nil(s.clickers["Mal Ory"])
+    assert.is_nil(s.clickers["Cee One"])
+    assert.are.equal("countered", s.talks["Cee One"].state)
+    -- Cee One clicks; a CLICK_LEAVE from anyone else, or for another stand, changes nothing.
+    hear("Cee One", "CLICK_OK", {standId = s.standId, agreedPct = 20})
+    assert.are.equal(20, s.clickers["Cee One"].pct)
+    hear("Mal Ory", "CLICK_LEAVE", {standId = s.standId})
+    hear("Cee One", "CLICK_LEAVE", {standId = "Dar Kbolt@1"})
+    assert.are.equal(20, s.clickers["Cee One"].pct)
+    assert.is_nil(lock.engine.ledgers[s.standId].shifts["Cee One"].leaveTs)
+    w:advance(2)
+    assert.are.same({}, wireOf(ns, w, "CLICK_NO", "Dar Kbolt")) -- no replies to any of it
+  end)
+
   it("keeps the stand's combat and soul shard flags, and its status with them", function()
     add("Cee One", {place = "gadgetzan"}); add("Cee Two", {place = "gadgetzan"})
     local s = lock.engine:openStand{kind = "lock"}
@@ -547,13 +658,128 @@ describe("Traveler", function()
     assert.are.equal(ride, last(t, "RIDE_CHANGED")[2])
   end)
 
-  it("landing away from the stand is not an arrival", function()
+  it("lands at the stand: an arrival in the right place (R43)", function()
     local _, ride = grouped()
-    w:moveTo("Dar Kbolt", "gadgetzan", 45, 0) -- still within 50 yards: the stand stays open
-    w:offerSummon("Dar Kbolt", "Tra Veler"); w:acceptSummon("Tra Veler"); w:advance(1)
-    assert.are.equal("RED", last(t, "GUARD_VERDICT")[2].level)
-    assert.are.equal("summoning", ride.state)
+    w:offerSummon("Dar Kbolt", "Tra Veler"); w:acceptSummon("Tra Veler")
+    assert.are.equal("arrived", ride.state)
+    assert.is_false(ride.wrongPlace)
+  end)
+
+  it("lands 45 yards off the stand: still an arrival, in the wrong place (R43)", function()
+    local _, ride = grouped()
+    w:moveTo("Dar Kbolt", "gadgetzan", 45, 0) -- within 50 yards: the stand stays open
+    w:offerSummon("Dar Kbolt", "Tra Veler"); w:acceptSummon("Tra Veler")
+    assert.are.equal("arrived", ride.state)
+    assert.is_true(ride.wrongPlace)
+    w:advance(1)
+    assert.are.equal(1, #wireOf(ns, w, "ARRIVED", "Tra Veler"))
+  end)
+
+  it("a declined summon (no move) is not an arrival (R43)", function()
+    local _, ride = grouped()
+    w:offerSummon("Dar Kbolt", "Tra Veler"); w:advance(1)
+    t.engine:cancelSummon()
+    w:moveTo("Tra Veler", "gadgetzan") -- a move before the popup's SUMMON_GONE is seen
+    w:advance(31)
+    assert.are.equal("grouped", ride.state)
+    w:moveTo("Tra Veler", "ironforge")
+    -- Declined on the game's own popup: the addon only sees the popup go away.
+    w:offerSummon("Dar Kbolt", "Tra Veler"); w:advance(1)
+    t.game:cancelSummon(); w:advance(31)
+    assert.are.equal("cancelled", ride.state) -- the second failure
     assert.are.same({}, emitted(t, "ARRIVED"))
+  end)
+
+  it("a landing seen within 30 s after the popup went away is still the summon's (R43)", function()
+    local _, ride = grouped()
+    w:offerSummon("Dar Kbolt", "Tra Veler"); w:advance(1)
+    w:fire(t, "SUMMON_GONE") -- the popup closes on accepting, before the teleport is seen
+    w:advance(5)
+    assert.are.equal("summoning", ride.state)
+    w:acceptSummon("Tra Veler")
+    assert.are.equal("arrived", ride.state)
+    assert.is_false(ride.wrongPlace)
+  end)
+
+  it("a move more than 30 s after the popup went away is not the summon's (R43)", function()
+    local _, ride = grouped()
+    w:offerSummon("Dar Kbolt", "Tra Veler"); w:advance(1)
+    w:fire(t, "SUMMON_GONE"); w:advance(31)
+    assert.are.equal("grouped", ride.state)
+    w:moveTo("Tra Veler", "gadgetzan")
+    assert.are.same({}, emitted(t, "ARRIVED"))
+  end)
+
+  it("while summoning, a short walk is no arrival, a jump of more than 100 yards is (R43)", function()
+    local _, ride = grouped()
+    w:offerSummon("Dar Kbolt", "Tra Veler"); w:advance(1)
+    w:moveTo("Tra Veler", "ironforge", 60, 0)
+    assert.are.equal("summoning", ride.state)
+    w:moveTo("Tra Veler", "ironforge", 101, 0)
+    assert.are.equal("arrived", ride.state)
+    assert.is_true(ride.wrongPlace)
+  end)
+
+  it("still judges a summon when gathering the facts fails, and never GREEN", function()
+    local _, ride = grouped()
+    -- The game's summon popup names the summoner itself; the map lookup the guard needs raises.
+    t.game.summonFacts = function() return {summoner = "Dar Kbolt", areaName = "Tanaris"} end
+    t.game.mapName = function() error("adapter broke") end
+    w:offerSummon("Dar Kbolt", "Tra Veler"); w:advance(1)
+    local verdict = last(t, "GUARD_VERDICT")
+    assert.are.equal("RED", verdict[2].level)
+    assert.are.equal(ride, verdict[3])
+    assert.are.equal("summoning", ride.state)
+    local logged = false
+    for _, line in ipairs(w.errors) do
+      if line:find("guard facts", 1, true) then logged = true end
+    end
+    assert.is_true(logged)
+    w.errors = {} -- logged on purpose
+  end)
+
+  it("is RED when the game gives no group roster (R21)", function()
+    grouped()
+    t.game.groupNames = function() return nil end
+    w:offerSummon("Dar Kbolt", "Tra Veler"); w:advance(1)
+    local v = last(t, "GUARD_VERDICT")[2]
+    assert.are.equal("RED", v.level)
+    assert.is_false(check(v, "combat").ok)
+  end)
+
+  it("checks the warlock's combat directly, and counts a roster name it can't find as fighting", function()
+    grouped()
+    -- The roster leaves the warlock out (or spells them otherwise); the warlock is fighting.
+    t.game.groupNames = function() return {"Tra Veler"} end
+    w:setCombat("Dar Kbolt", true)
+    w:offerSummon("Dar Kbolt", "Tra Veler"); w:advance(1)
+    local v = last(t, "GUARD_VERDICT")[2]
+    assert.are.equal("RED", v.level)
+    assert.are.equal("In combat: Dar Kbolt", check(v, "combat").text)
+    w:setCombat("Dar Kbolt", false)
+    -- A roster name that resolves to no unit counts as fighting, by name.
+    t.game.groupNames = function() return {"Tra Veler", "Dar Kbolt", "Dar Kbolt-Forever"} end
+    w:offerSummon("Dar Kbolt", "Tra Veler"); w:advance(1)
+    v = last(t, "GUARD_VERDICT")[2]
+    assert.are.equal("RED", v.level)
+    assert.are.equal("In combat: Dar Kbolt-Forever", check(v, "combat").text)
+  end)
+
+  it("judges a summon from a moved stand against the place I asked for: RED (R46)", function()
+    local s = grouped()
+    -- A changed addon keeps its stand open while the warlock walks 60 yards,
+    -- and advertises the new spot under the same id.
+    lock.engine.stand = nil
+    w:moveTo("Dar Kbolt", "gadgetzan", 60, 0)
+    local moved = ns.Stand.toFields(s)
+    moved.wx = s.wx + 60
+    lock.engine:send("STAND", moved, "CHANNEL"); w:advance(1)
+    assert.are.equal(s.wx + 60, ns.Board.get(t.engine.board, s.standId).wx)
+    w:offerSummon("Dar Kbolt", "Tra Veler"); w:advance(1)
+    local v = last(t, "GUARD_VERDICT")[2]
+    assert.are.equal("RED", v.level)
+    assert.is_false(check(v, "position").ok)
+    assert.is_false(check(v, "changed").ok)
   end)
 
   it("submitArrival checks everything before it rates or opens a trade", function()

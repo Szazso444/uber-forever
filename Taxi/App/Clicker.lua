@@ -152,16 +152,6 @@ Engine.handlers.CLICK_OK = function(e, msg, sender)
   e:emit("SHIFT_STARTED", e.shift)
 end
 
--- The owner said no (to the application, or to my taking the counter-offer).
-Engine.handlers.CLICK_NO = function(e, msg, sender)
-  local neg = applicationFrom(e, msg.standId, sender)
-  if neg ~= nil then
-    Negotiation.apply(neg, "DECLINE", nil, MAX_PCT)
-    e.application = nil
-    e:emit("CLICK_DECLINED", neg)
-  end
-end
-
 -- The shift ------------------------------------------------------------------------------
 
 -- Owed (agreed tips only), received, the Share stars to suggest, and the
@@ -190,6 +180,23 @@ local function endShift(e, tell)
   endedShifts(e)[shift.shiftId] = summary
   e:emit("SHIFT_ENDED", summary)
   return summary
+end
+
+-- The owner said no: to my application, to my taking the counter-offer, or,
+-- during my shift, to my clicking any longer (sent away, or never joined the
+-- group in time).
+Engine.handlers.CLICK_NO = function(e, msg, sender)
+  local shift = e.shift
+  if shift ~= nil and msg.standId == shift.standId and Names.same(sender, shift.owner) then
+    endShift(e, false)
+    return
+  end
+  local neg = applicationFrom(e, msg.standId, sender)
+  if neg ~= nil then
+    Negotiation.apply(neg, "DECLINE", nil, MAX_PCT)
+    e.application = nil
+    e:emit("CLICK_DECLINED", neg)
+  end
 end
 
 -- Stops clicking. Returns the shift's summary, or nil and "not_on_shift".

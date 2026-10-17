@@ -299,6 +299,18 @@ local function inviteExpired(e, ride)
   e:emit("RIDE_CHANGED", ride)
 end
 
+-- Gives an invited traveler INVITE_TIMEOUT seconds to join. A new invite
+-- starts the wait over: only the latest wait can give up on the ride.
+local function awaitJoin(e, ride)
+  local wait = {}
+  ride.inviteWait = wait
+  e.clock:after(INVITE_TIMEOUT, function()
+    if not e.stopped and ride.inviteWait == wait then
+      e:safely("invite timeout", inviteExpired, e, ride)
+    end
+  end)
+end
+
 -- Accepts the request filed under key: the ride gets its id, the traveler a
 -- seat and an invite, and ACCEPT is whispered. Returns the ride id, or nil and
 -- "unknown_ride" (no request waiting under key), "full" (no free seat) or
@@ -325,14 +337,23 @@ Engine.acceptRequest = Engine.action(function(e, key)
     Ride.apply(ride, "JOINED", now)
   else
     e.game:invite(ride.traveler)
-    e.clock:after(INVITE_TIMEOUT, function()
-      if not e.stopped then
-        e:safely("invite timeout", inviteExpired, e, ride)
-      end
-    end)
+    awaitJoin(e, ride)
   end
   e:emit("RIDE_CHANGED", ride)
   return rideId
+end)
+
+-- Invites an accepted traveler again (one who had to leave another group
+-- first), and starts their INVITE_TIMEOUT over. Returns true, or nil and
+-- "unknown_ride" when no ride under key is waiting for its traveler to join.
+Engine.reinvite = Engine.action(function(e, key)
+  local ride = e.rides[key]
+  if ride == nil or ride.state ~= "accepted" or not Names.same(ride.driver, e.me) or e:inGroup(ride.traveler) then
+    return nil, "unknown_ride"
+  end
+  e.game:invite(ride.traveler)
+  awaitJoin(e, ride)
+  return true
 end)
 
 -- The toast's "Convert to raid & invite": the conversion is the player's own
@@ -390,12 +411,17 @@ end)
 -- cancelled. A clicker seen in my group who is gone now leaves the stand.
 local AWAITING = { grouped = true, summoning = true, portal = true }
 
-local function dropClicker(e, stand, name)
+-- A clicker leaves the stand: their shift ends in my ledger. When `tell`, the
+-- owner sent them away and CLICK_NO tells their addon the shift is over.
+local function dropClicker(e, stand, name, tell)
   Stand.removeClicker(stand, name)
   part(stand, "seen")[Names.normalize(name)] = nil
   local l = e.ledgers[stand.standId]
   if l ~= nil then
     Ledger.leave(l, name, e.clock:now())
+  end
+  if tell then
+    e:send("CLICK_NO", { standId = stand.standId }, "WHISPER", name)
   end
   standChanged(e, stand)
 end
@@ -557,6 +583,18 @@ local function seatClicker(e, stand, name, pct)
   return true
 end
 
+-- A clicker invited to my group gets INVITE_TIMEOUT seconds to join it, or is
+-- sent away; one who joined is watched by GROUP_CHANGED instead.
+local function awaitClicker(e, stand, name)
+  local seat = stand.clickers[name]
+  e.clock:after(INVITE_TIMEOUT, function()
+    if e.stopped or e.stand ~= stand or stand.clickers[name] ~= seat or part(stand, "seen")[name] then
+      return
+    end
+    e:safely("clicker invite timeout", dropClicker, e, stand, name, true)
+  end)
+end
+
 -- An agreed negotiation: the clicker is seated, CLICK_OK confirms the share
 -- and the clicker is invited. If the share no longer fits, CLICK_NO.
 local function agree(e, stand, neg)
@@ -569,18 +607,24 @@ local function agree(e, stand, neg)
   e:send("CLICK_OK", { standId = stand.standId, agreedPct = neg.pct }, "WHISPER", neg.clicker)
   if not e:inGroup(neg.clicker) then
     e.game:invite(neg.clicker)
+    awaitClicker(e, stand, neg.clicker)
   end
   return true
 end
 
 -- Someone asks to click on my stand for askedPct. CLICK_NO when they can't
--- (R19), the stand has no room for a clicker, or the ask is not a share.
+-- (R19), the stand has no room for a clicker, or the ask is not a share. A
+-- repeat while my talk with them is open is ignored, so the share I am
+-- answering can't be swapped under me (R47).
 Engine.handlers.CLICK_APPLY = function(e, msg, sender)
   local stand = e.stand
   if stand == nil or msg.standId ~= stand.standId then
     return
   end
   local name = Names.normalize(sender)
+  if part(stand, "talks")[name] ~= nil then
+    return
+  end
   if stand.kind ~= "lock" or not mayClick(e, stand, name) or Stand.clickerCount(stand) >= MAX_CLICKERS
     or not wholeIn(msg.askedPct, 1, 99) then
     e:send("CLICK_NO", { standId = stand.standId }, "WHISPER", sender)
@@ -696,6 +740,20 @@ Engine.addOwnCrew = Engine.action(function(e, name, pct)
     return nil, "seated"
   end
   return seatClicker(e, stand, name, pct)
+end)
+
+-- Sends a clicker away from my stand: their shift ends and CLICK_NO tells
+-- them. Returns true, or nil and "no_stand" or "unknown_clicker".
+Engine.dismissClicker = Engine.action(function(e, name)
+  local stand = e.stand
+  if stand == nil then
+    return nil, "no_stand"
+  end
+  if not isClicker(stand, name) then
+    return nil, "unknown_clicker"
+  end
+  dropClicker(e, stand, Names.normalize(name), true)
+  return true
 end)
 
 -- Payouts --------------------------------------------------------------------------------------

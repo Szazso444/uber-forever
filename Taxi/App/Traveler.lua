@@ -26,6 +26,11 @@ local MAX_RESENDS = 2 -- a request goes out at most three times
 -- A group member counts as the stand's crew for the combat check when they are
 -- this close to the landing spot (or can't be placed at all).
 local CREW_YARDS = 100
+-- A summon's landing (R43): a move within this many seconds after its popup
+-- went away is still its landing, and a move of more than JUMP_YARDS from
+-- where it found me (or onto another map) is one.
+local LANDING_WINDOW = 30
+local JUMP_YARDS = 100
 
 -- Where the stand is; a moved stand differs in one of these (as Board).
 local PLACE_FIELDS = { "mapID", "wx", "wy", "zone", "subzone" }
@@ -211,22 +216,48 @@ end
 
 -- The Summon Guard ----------------------------------------------------------------------
 
--- How far a ride has come before a summon; the furthest one with this driver
--- is the one the summon is for.
+-- How far a ride has come before a summon. A summon is judged against my
+-- furthest ride with its summoner; failing that, against my furthest ride
+-- under way (accepted or later), whose driver it then doesn't match: a
+-- stranger's summon during a booked ride is RED, not "not a Taxi ride" (R45).
 local BEFORE_SUMMON = { requested = 1, accepted = 2, grouped = 3, summoning = 4 }
+local UNDER_WAY = 2
+
+local function further(best, ride)
+  if best == nil then
+    return ride
+  end
+  local rank, bestRank = BEFORE_SUMMON[ride.state], BEFORE_SUMMON[best.state]
+  if rank > bestRank or (rank == bestRank and ride.times.requested > best.times.requested) then
+    return ride
+  end
+  return best
+end
 
 local function summonRide(e, summoner)
-  local best
+  local own, other
   for _, ride in pairs(e.rides) do
     local rank = BEFORE_SUMMON[ride.state]
-    if rank and ride.kind == "summon" and isMine(e, ride) and Names.same(ride.driver, summoner) then
-      local bestRank = best and BEFORE_SUMMON[best.state]
-      if best == nil or rank > bestRank or (rank == bestRank and ride.times.requested > best.times.requested) then
-        best = ride
+    if rank and ride.kind == "summon" and isMine(e, ride) then
+      if Names.same(ride.driver, summoner) then
+        own = further(own, ride)
+      elseif rank >= UNDER_WAY then
+        other = further(other, ride)
       end
     end
   end
-  return best
+  return own or other
+end
+
+-- Calls fn(...) in a pcall and returns its first result; an error is logged
+-- as Engine:safely logs it, and gives nil.
+local function try(e, what, fn, ...)
+  local ok, result = pcall(fn, ...)
+  if not ok then
+    pcall(e.log, tostring(e.me) .. ": " .. what .. ": " .. tostring(result))
+    return nil
+  end
+  return result
 end
 
 -- Whether a group member counts as the stand's crew: anyone within CREW_YARDS
@@ -241,16 +272,29 @@ local function nearStand(game, unit, stand)
     and Util.distance(wx, wy, stand.wx, stand.wy) <= CREW_YARDS
 end
 
--- The names of the group members in combat at the stand: the agreed warlock
--- wherever they are, and everyone else near the stand. A member whose combat
--- state is unknown counts as in combat.
+-- The names of the group members in combat at the stand. The agreed warlock
+-- is looked up directly, wherever they are, so a roster that leaves them out
+-- or spells them otherwise can't hide them; anyone else counts when near the
+-- stand. Whatever can't be told counts as fighting: a combat state the game
+-- doesn't give, or a roster name with no unit (listed by that name). No
+-- roster at all gives nil, which the guard treats as unsafe.
 local function crewInCombat(e, stand, driver)
-  local game, out = e.game, {}
-  for _, name in ipairs(game:groupNames() or {}) do
-    local unit = not Names.same(name, e.me) and game:unitFor(name) or nil
-    if unit ~= nil and (Names.same(name, driver) or nearStand(game, unit, stand))
-      and game:unitInCombat(unit) ~= false then
-      out[#out + 1] = name
+  local game = e.game
+  local roster = game:groupNames()
+  if type(roster) ~= "table" then
+    return nil
+  end
+  local out = {}
+  local unit = game:unitFor(driver)
+  if unit == nil or game:unitInCombat(unit) ~= false then
+    out[1] = driver
+  end
+  for _, name in ipairs(roster) do
+    if not Names.same(name, e.me) and not Names.same(name, driver) then
+      unit = game:unitFor(name)
+      if unit == nil or (nearStand(game, unit, stand) and game:unitInCombat(unit) ~= false) then
+        out[#out + 1] = name
+      end
     end
   end
   return out
@@ -287,7 +331,10 @@ local function guardFacts(e, summon, ride)
   if ride == nil then
     return f
   end
-  local stand = standOf(e, ride)
+  -- A stand that moved is judged by the place I asked for (R46). Otherwise
+  -- the live view, which then has that very place anyway.
+  local moved = standMoved(e, ride)
+  local stand = moved and ride.stand or standOf(e, ride)
   f.agreedWarlock = ride.driver
   f.standZone, f.standSubzone, f.standMapID = stand.zone, stand.subzone, stand.mapID
   f.standZoneLocal = stand.mapID ~= nil and game:mapName(stand.mapID) or nil
@@ -304,25 +351,57 @@ local function guardFacts(e, summon, ride)
     f.zoneMin = game:zoneLevels(stand.mapID) -- the zone's lowest level
   end
   f.playerLevel = game:level()
-  f.standChanged = standMoved(e, ride)
+  f.standChanged = moved
   local trust = e:summary(ride.driver, "trust")
   f.trustScore = trust.score
   f.trustIsNew = trust.isNew ~= false
   return f
 end
 
--- A summon is offered: the guard compares it with my ride from that warlock,
--- if I have one. It never accepts anything.
+-- The facts when gathering them failed: everything unknown (crewInCombat
+-- too), so the guard can only say RED, or YELLOW for no Taxi ride at all.
+local function unknownFacts(summon, ride)
+  return {
+    hasRide = ride ~= nil,
+    summoner = summon and summon.summoner or nil,
+    areaName = summon and summon.areaName or nil,
+    agreedWarlock = ride and ride.driver or nil,
+  }
+end
+
+-- A summon from the ride's own warlock: the ride is summoning, and where the
+-- summon found me is kept so that its landing can be told (R43). A summon from
+-- anyone else takes the warlock's place on screen, so no landing is expected.
+local function awaitLanding(e, ride, summon)
+  if summon == nil or not Names.same(summon.summoner, ride.driver) then
+    ride.summon = nil
+    return
+  end
+  if ride.state == "grouped" then
+    Ride.apply(ride, "SUMMON_OFFERED", e.clock:now())
+    changed(e, ride)
+  end
+  if ride.state == "summoning" then
+    local loc = try(e, "location", e.game.location, e.game)
+    loc = type(loc) == "table" and loc or {}
+    ride.summon = { mapID = loc.mapID, wx = loc.wx, wy = loc.wy }
+  end
+end
+
+-- A summon is offered: the guard compares it with my ride (see summonRide).
+-- Gathering the facts can't stop the verdict: if it fails, the guard gets
+-- unknowns. It never accepts anything.
 Engine.gameHandlers.SUMMON_OFFERED = function(e)
-  local summon = e.game:summonFacts()
+  local game = e.game
+  local summon = try(e, "summon facts", game.summonFacts, game)
   if type(summon) ~= "table" then
     summon = nil
   end
-  local ride = summon and summonRide(e, summon.summoner) or nil
-  local verdict = SummonGuard.evaluate(guardFacts(e, summon, ride))
-  if ride ~= nil and ride.state == "grouped" then
-    Ride.apply(ride, "SUMMON_OFFERED", e.clock:now())
-    changed(e, ride)
+  local ride = summonRide(e, summon and summon.summoner)
+  local facts = try(e, "guard facts", guardFacts, e, summon, ride) or unknownFacts(summon, ride)
+  local verdict = SummonGuard.evaluate(facts)
+  if ride ~= nil then
+    awaitLanding(e, ride, summon)
   end
   e:emit("GUARD_VERDICT", verdict, ride)
 end
@@ -330,16 +409,39 @@ end
 -- Declines the summon on screen (the guard panel's button). Always allowed:
 -- turning a summon down is never refused.
 function Engine:cancelSummon()
+  for _, ride in pairs(self.rides) do
+    if isMine(self, ride) and ride.state == "summoning" and ride.summon ~= nil then
+      ride.summon.declined = true
+    end
+  end
   self.game:cancelSummon()
   return true
 end
 
--- The summon went away without bringing me: wait for another, once.
+local function summonFailed(e, ride)
+  ride.summon = nil
+  Ride.apply(ride, "SUMMON_FAILED", e.clock:now())
+  changed(e, ride)
+end
+
+-- The summon popup went away. Declined on the guard panel, or not the
+-- warlock's, the summon failed: wait for another, once. Otherwise it may have
+-- been accepted, and the landing may be seen only a moment later, so the
+-- failure waits LANDING_WINDOW seconds (R43).
 Engine.gameHandlers.SUMMON_GONE = function(e)
   for _, ride in pairs(e.rides) do
+    local summon = ride.summon
     if isMine(e, ride) and ride.state == "summoning" then
-      Ride.apply(ride, "SUMMON_FAILED", e.clock:now())
-      changed(e, ride)
+      if summon == nil or summon.declined then
+        summonFailed(e, ride)
+      elseif summon.goneAt == nil then
+        summon.goneAt = e.clock:now()
+        e.clock:after(LANDING_WINDOW, function()
+          if not e.stopped and ride.summon == summon and ride.state == "summoning" then
+            e:safely("summon gone", summonFailed, e, ride)
+          end
+        end)
+      end
     end
   end
 end
@@ -360,32 +462,50 @@ end
 
 -- Arrival ------------------------------------------------------------------------------------
 
--- Whether I have arrived at where `loc` puts me. A summon ride arrives within
--- GUARD_YARDS of the stand on its map, once a summon was offered (the popup's
--- SUMMON_GONE may come before the landing is seen, so a ride it sent back to
--- grouped still counts). A portal ride arrives on its destination's map.
-local function arrivedAt(e, ride, loc)
+-- Whether a move is the landing of my ride's own summon (R43): while the
+-- summon is on screen, or within LANDING_WINDOW after it went away (after that
+-- SUMMON_GONE's timer has failed the summon), I changed map or am more than
+-- JUMP_YARDS from where it found me. Wherever I landed: a summon to the wrong
+-- place is still the warlock's. A summon I declined never lands.
+local function landed(ride, loc)
+  local from = ride.summon
+  if ride.state ~= "summoning" or from == nil or from.declined then
+    return false
+  end
+  if loc.mapID ~= nil and from.mapID ~= nil and loc.mapID ~= from.mapID then
+    return true
+  end
+  return finite(loc.wx) and finite(loc.wy) and finite(from.wx) and finite(from.wy)
+    and Util.distance(from.wx, from.wy, loc.wx, loc.wy) > JUMP_YARDS
+end
+
+-- Whether I have arrived where `loc` puts me: a summon ride when its summon
+-- landed me, a portal ride on its destination's map.
+local function arrivedAt(ride, loc)
   if ride.kind == "summon" then
-    if not (ride.state == "summoning" or (ride.state == "grouped" and ride.times.summoning ~= nil)) then
-      return false
-    end
-    local stand = standOf(e, ride)
-    return loc.mapID ~= nil and loc.mapID == stand.mapID
-      and finite(loc.wx) and finite(loc.wy) and finite(stand.wx) and finite(stand.wy)
-      and Util.distance(loc.wx, loc.wy, stand.wx, stand.wy) <= Config.GUARD_YARDS
+    return landed(ride, loc)
   end
   local mapID = portalMap(ride.dest)
   return ride.state == "portal" and mapID ~= nil and loc.mapID == mapID
 end
 
+-- Within GUARD_YARDS of the stand, on its map.
+local function atStand(stand, loc)
+  return loc.mapID ~= nil and loc.mapID == stand.mapID
+    and finite(loc.wx) and finite(loc.wy) and finite(stand.wx) and finite(stand.wy)
+    and Util.distance(loc.wx, loc.wy, stand.wx, stand.wy) <= Config.GUARD_YARDS
+end
+
 -- I arrived: the ride says so, ARRIVED goes out (it opens the death window on
 -- every client that heard the start), and my own witness and receipts get it.
-local function arrive(e, ride)
+-- A summon that landed me away from the place I asked for is wrongPlace.
+local function arrive(e, ride, loc)
   local now = e.clock:now()
-  if ride.state == "grouped" then
-    Ride.apply(ride, "SUMMON_OFFERED", now)
-  end
   Ride.apply(ride, "ARRIVED", now)
+  if ride.kind == "summon" then
+    ride.summon = nil
+    ride.wrongPlace = not atStand(ride.stand, loc)
+  end
   e:send("ARRIVED", { rideId = ride.rideId, warlock = ride.driver }, "CHANNEL")
   e.witness:arrived(ride.rideId, e.me, now, e.me)
   if Ratings.addReceipt(e.db, ride.driver, ride.rideId, now, now) then
@@ -401,8 +521,8 @@ Engine.gameHandlers.MOVED = function(e)
     return
   end
   for _, ride in pairs(e.rides) do
-    if isMine(e, ride) and arrivedAt(e, ride, loc) then
-      arrive(e, ride)
+    if isMine(e, ride) and arrivedAt(ride, loc) then
+      arrive(e, ride, loc)
     end
   end
 end
