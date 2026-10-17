@@ -282,15 +282,32 @@ end
 -- Public actions --------------------------------------------------------------------
 
 -- Wraps a public action so it refuses with nil, "disabled" while the Engine has
--- no channel. Services define their actions with it:
+-- no channel, and with nil, "dead" once the player's Hardcore character has
+-- died (a death there is final, R35/R37). Services define their actions with it:
 --   Engine.requestRide = Engine.action(function(e, standId, offer, dest) ... end)
 function Engine.action(fn)
   return function(e, ...)
     if e.disabled then
       return nil, "disabled"
     end
+    if e.game:isHardcore() and e.game:isDead() then
+      return nil, "dead"
+    end
     return fn(e, ...)
   end
+end
+
+-- Group helpers shared by the services ----------------------------------------------
+
+-- Where group messages (TIP, TIP_ACK, PORTAL_UP) go: in a raid "PARTY" would
+-- only reach my own subgroup.
+function Engine:groupDist()
+  return self.game:isRaid() and "RAID" or "PARTY"
+end
+
+-- True when `name` is another member of my group (never myself).
+function Engine:inGroup(name)
+  return not Names.same(name, self.me) and Names.normalize(name) ~= nil and self.game:unitFor(name) ~= nil
 end
 
 -- Placeholders until the services define the real actions.

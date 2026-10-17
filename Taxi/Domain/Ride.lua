@@ -40,6 +40,20 @@ function M.makeId(driver, traveler, now)
   return driver .. "@" .. traveler .. "@" .. math.floor(now)
 end
 
+-- The driver and traveler an id from makeId names, or nil for anything not in
+-- the driver@traveler@seconds form. Ids come off the wire, so nothing about
+-- them is trusted: the caller still checks the names against the sender.
+function M.parseId(id)
+  if type(id) ~= "string" then
+    return nil
+  end
+  local driver, traveler = id:match("^([^@]+)@([^@]+)@%d+$")
+  if driver == nil then
+    return nil
+  end
+  return driver, traveler
+end
+
 -- `o`: rideId (nil until the driver accepts), kind ("summon" or "portal"),
 -- driver, traveler, standId, offer (the tip offered, in copper), dest and now.
 function M.new(o)

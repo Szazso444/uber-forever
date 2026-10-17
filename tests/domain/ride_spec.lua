@@ -79,6 +79,20 @@ describe("Ride", function()
     end)
   end)
 
+  describe("parseId", function()
+    it("gives back the driver and the traveler of an id makeId built", function()
+      assert.are.same({ "Dar Kbolt", "Tra Vler" }, { Ride.parseId(Ride.makeId("Dar Kbolt", "Tra Vler", 1234.5)) })
+    end)
+
+    it("gives nil for anything that is not driver@traveler@seconds", function()
+      for _, id in ipairs{ "", "r1", "a@b", "a@b@", "a@b@1.5", "@b@1", "a@@1", "a@b@c@1", "a@b@-1", "a@b@1x" } do
+        assert.is_nil(Ride.parseId(id), id)
+      end
+      assert.is_nil(Ride.parseId(nil))
+      assert.is_nil(Ride.parseId(42))
+    end)
+  end)
+
   describe("new", function()
     it("starts requested with no retries and the request time", function()
       local r = newRide("summon")

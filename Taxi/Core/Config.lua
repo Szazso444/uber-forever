@@ -22,6 +22,7 @@ local M = {
   DEFAULT_SEATS = 3,
   DEFAULT_CLICKER_PCT = 25, -- percent of the fare per clicker (50/25/25 split)
   TIP_PRESETS = { 5000, 10000 }, -- copper: 50s and 1g
+  MAX_TIP = 100000000, -- copper (10,000g): a TIP or TIP_ACK above this is ignored
 
   -- Summon guard
   GUARD_YARDS = 40,
@@ -64,13 +65,15 @@ local M = {
   -- Warlock spells and items (Classic IDs; verified in-game in Task 19)
   RITUAL_SPELL = 698, -- Ritual of Summoning
   SOUL_SHARD_ITEM = 6265,
+  -- Mage portals. mapID is the destination city's uiMapID: a portal traveler
+  -- has arrived when their own map is this one (verified in-game in Task 19).
   PORTALS = {
-    { spellId = 10059, key = "stormwind" },
-    { spellId = 11416, key = "ironforge" },
-    { spellId = 11419, key = "darnassus" },
-    { spellId = 11417, key = "orgrimmar" },
-    { spellId = 11418, key = "undercity" },
-    { spellId = 11420, key = "thunderbluff" },
+    { spellId = 10059, key = "stormwind", mapID = 1453 },
+    { spellId = 11416, key = "ironforge", mapID = 1455 },
+    { spellId = 11419, key = "darnassus", mapID = 1457 },
+    { spellId = 11417, key = "orgrimmar", mapID = 1454 },
+    { spellId = 11418, key = "undercity", mapID = 1458 },
+    { spellId = 11420, key = "thunderbluff", mapID = 1456 },
   },
 }
 
