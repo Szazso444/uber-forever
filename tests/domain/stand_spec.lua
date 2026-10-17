@@ -349,6 +349,18 @@ describe("Stand", function()
       assert.are.equal("portals", v.note)
     end)
 
+    it("fromFields carries every STAND schema field into the view", function()
+      local f = {}
+      for i, field in ipairs(ns.Protocol.SCHEMAS.STAND) do
+        local name, kind = field[1], field[2]
+        f[name] = kind == "n" and i or kind == "L" and {"p" .. i} or "v" .. i
+      end
+      local v = S.fromFields(f, "Real Sender", 5)
+      for _, field in ipairs(ns.Protocol.SCHEMAS.STAND) do
+        assert.are.same(f[field[1]], v[field[1]], field[1])
+      end
+    end)
+
     it("never trusts an owner-like value inside the message", function()
       local f = S.toFields(lock())
       f.owner = "Evil Twin"; f.sender = "Evil Twin"; f.author = "Evil Twin"; f.seenAt = 999
