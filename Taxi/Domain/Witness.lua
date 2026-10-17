@@ -12,17 +12,31 @@ local _, ns = ...
 -- its relayer is struck if the "dead" traveler is seen alive.
 -- A traveler who reports their own death and is then seen alive is a liar.
 --
+-- A Hardcore character dies once, so a traveler has at most one heavy death on
+-- file; further first-hand claims from the same name are refused, which stops
+-- one silent identity from minting a heavy death per invented ride.
+--
 -- Rides are only ever learned from the traveler (the sender must be the
--- traveler), so nobody can start a ride for someone else. The witness keeps
--- rides in memory for RIDE_MEMORY seconds; the deaths themselves are stored
--- through Ratings, which does not keep where a death came from, so the witness
--- remembers that too (ride.deathSource) for as long as it remembers the ride.
+-- traveler), so nobody can start a ride for someone else, and a traveler has at
+-- most MAX_OPEN_RIDES open at a time. The witness keeps rides in memory for
+-- RIDE_MEMORY seconds. The deaths themselves are stored through Ratings, which
+-- keeps where each came from (self, observed or relayed), so a reload loses
+-- nothing the witness needs. Small indexes (rides by traveler, deaths by
+-- victim) mean no call has to walk every ride or every stored death.
 local Names, Ratings, Config = ns.Names, ns.Ratings, ns.Config
 
 local M = {}
 
 local Witness = {}
 Witness.__index = Witness
+
+-- Open rides one traveler can have at once; further ride starts are ignored
+-- until one expires.
+local MAX_OPEN_RIDES = 3
+
+-- A report sent inside the death window can arrive a little later than the
+-- window by the time it has been queued, split and put together again.
+local TRANSPORT_SLACK = 30
 
 -- True only for a real, finite number (not nil, not NaN, not +-infinity).
 local function finite(x)
@@ -59,16 +73,137 @@ local function pairMatches(rideId, warlock, victim)
   return Names.same(driver, warlock) and Names.same(traveler, victim)
 end
 
+-- Indexes -------------------------------------------------------------------------
+--   ridesOf[victim]  = { [rideId] = ride }            the open rides of a traveler
+--   deathsOf[victim] = { [key] = {target, id} }       every death on file naming a victim
+--   heavyOf[victim]  = {target, id, ts}               the victim's one heavy death
+-- They are only a way to find things quickly: what they point at is checked
+-- against the db and the rides before it is used.
+
+local function deathKey(target, id)
+  return target .. "\0" .. id
+end
+
+-- Note a death on file (a heavy one also becomes the victim's heavy death, when
+-- they have none; with several the earliest is the one).
+local function track(w, victim, target, id, heavy, ts)
+  local byKey = w.deathsOf[victim]
+  if byKey == nil then
+    byKey = {}
+    w.deathsOf[victim] = byKey
+  end
+  byKey[deathKey(target, id)] = { target = target, id = id }
+  if heavy then
+    local h = w.heavyOf[victim]
+    local when = finite(ts) and ts or math.huge
+    if h == nil or when < h.ts or (when == h.ts and deathKey(target, id) < deathKey(h.target, h.id)) then
+      w.heavyOf[victim] = { target = target, id = id, ts = when }
+    end
+  end
+end
+
+-- Forget a death that is no longer on file.
+local function untrack(w, victim, target, id)
+  local byKey = w.deathsOf[victim]
+  if byKey ~= nil then
+    byKey[deathKey(target, id)] = nil
+    if next(byKey) == nil then
+      w.deathsOf[victim] = nil
+    end
+  end
+  local h = w.heavyOf[victim]
+  if h ~= nil and h.target == target and h.id == id then
+    w.heavyOf[victim] = nil
+  end
+end
+
+-- Index every death already in the db.
+local function indexDb(w)
+  for target, byId in pairs(w.db.deaths) do
+    if type(target) == "string" and type(byId) == "table" then
+      for id, death in pairs(byId) do
+        if type(id) == "string" and type(death) == "table" then
+          local victim = nameOf(death.victim)
+          if victim ~= nil then
+            track(w, victim, target, id, death.heavy == true, death.ts)
+          end
+        end
+      end
+    end
+  end
+end
+
+-- The death on file for a warlock and ride id, or nil.
+local function storedDeath(w, target, id)
+  local byId = w.db.deaths[target]
+  local death = type(byId) == "table" and byId[id] or nil
+  if type(death) == "table" then
+    return death
+  end
+  return nil
+end
+
+-- The victim's heavy death on file, as {target, id}, or nil. An entry that is
+-- no longer a heavy death of theirs in the db is forgotten.
+local function heavyDeathOf(w, victim)
+  local h = w.heavyOf[victim]
+  if h ~= nil then
+    local death = storedDeath(w, h.target, h.id)
+    if death == nil or death.heavy ~= true or not Names.same(death.victim, victim) then
+      w.heavyOf[victim] = nil
+      return nil
+    end
+  end
+  return h
+end
+
+-- True when a heavy death of victim on this warlock's ride may be added: the
+-- victim has no heavy death on file, or it is this very ride's death.
+local function heavyAllowed(w, victim, warlock, rideId)
+  local h = heavyDeathOf(w, victim)
+  return h == nil or (Names.same(h.target, warlock) and h.id == rideId)
+end
+
+-- Store a death through Ratings and keep the indexes in step. Returns whether
+-- it was stored.
+local function store(w, death, now)
+  if not Ratings.addDeath(w.db, death, now) then
+    return false
+  end
+  track(w, death.victim, death.target, death.id, death.heavy, death.ts)
+  return true
+end
+
+-- A known ride must be the one a report describes, and a death at time `at`
+-- must fall within the death window of its arrival (with transport slack) when
+-- the arrival is known. A ride that is not known fits anything.
+local function rideFits(ride, victim, warlock, at)
+  if ride == nil then
+    return true
+  end
+  if not (Names.same(ride.victim, victim) and Names.same(ride.warlock, warlock)) then
+    return false
+  end
+  if ride.arrivedTs ~= nil then
+    local after = at - ride.arrivedTs
+    return after >= 0 and after <= Config.DEATH_WINDOW + TRANSPORT_SLACK
+  end
+  return true
+end
+
 -- db: the TaxiDB table, where deaths, liars and strikes are kept.
 function M.new(db)
-  return setmetatable({ db = db, rides = {} }, Witness)
+  local w = setmetatable({ db = db, rides = {}, ridesOf = {}, deathsOf = {}, heavyOf = {} }, Witness)
+  indexDb(w)
+  return w
 end
 
 -- Rides --------------------------------------------------------------------------
 
 -- The traveler announced a ride (RIDE_START). Only the traveler's own message
 -- counts, so sender must be the victim. Returns whether the ride is now known.
--- Hearing a known ride's start again changes nothing.
+-- Hearing a known ride's start again changes nothing. A traveler with
+-- MAX_OPEN_RIDES rides open gets no more until one expires.
 function Witness:rideStarted(rideId, victim, warlock, ts, sender)
   local who, driver = nameOf(victim), nameOf(warlock)
   if not nonEmptyString(rideId) or who == nil or driver == nil or not finite(ts) then
@@ -81,7 +216,21 @@ function Witness:rideStarted(rideId, victim, warlock, ts, sender)
   if ride ~= nil then
     return Names.same(ride.victim, who) and Names.same(ride.warlock, driver)
   end
-  self.rides[rideId] = { victim = who, warlock = driver, startTs = ts }
+  local open = self.ridesOf[who]
+  if open == nil then
+    open = {}
+  end
+  local count = 0
+  for _ in pairs(open) do
+    count = count + 1
+  end
+  if count >= MAX_OPEN_RIDES then
+    return false
+  end
+  ride = { victim = who, warlock = driver, startTs = ts }
+  self.rides[rideId] = ride
+  open[rideId] = ride
+  self.ridesOf[who] = open
   return true
 end
 
@@ -112,6 +261,13 @@ function Witness:expire(now)
   for id, ride in pairs(self.rides) do
     if now - ride.startTs > Config.RIDE_MEMORY then
       self.rides[id] = nil
+      local open = self.ridesOf[ride.victim]
+      if open ~= nil then
+        open[id] = nil
+        if next(open) == nil then
+          self.ridesOf[ride.victim] = nil
+        end
+      end
       dropped = dropped + 1
     end
   end
@@ -125,16 +281,17 @@ end
 -- at most DEATH_WINDOW seconds earlier (and not later than the death); with
 -- rides overlapping it is the latest arrival's. Returns the heavy death that was
 -- recorded, {target, victim, id, ts, heavy, source = "observed"}, or nil when
--- there is none, when this ride's death was already seen, or when it could not
--- be stored.
+-- there is none, when the victim already has a heavy death on another ride (a
+-- character dies once), when this ride's death was already seen, or when it
+-- could not be stored.
 function Witness:observedDeath(victim, ts)
   local who = nameOf(victim)
   if who == nil or not finite(ts) then
     return nil
   end
   local bestId, best
-  for id, ride in pairs(self.rides) do
-    if Names.same(ride.victim, who) and ride.arrivedTs ~= nil then
+  for id, ride in pairs(self.ridesOf[who] or {}) do
+    if ride.arrivedTs ~= nil then
       local after = ts - ride.arrivedTs
       if after >= 0 and after <= Config.DEATH_WINDOW then
         if best == nil or ride.arrivedTs > best.arrivedTs or (ride.arrivedTs == best.arrivedTs and id < bestId) then
@@ -143,27 +300,32 @@ function Witness:observedDeath(victim, ts)
       end
     end
   end
-  if best == nil or best.deathSource == "observed" then
+  if best == nil or not heavyAllowed(self, who, best.warlock, bestId) then
     return nil
   end
-  local death = { target = best.warlock, victim = best.victim, id = bestId, ts = ts, heavy = true, source = "observed" }
-  if not Ratings.addDeath(self.db, death, ts) then
+  local known = storedDeath(self, best.warlock, bestId)
+  if known ~= nil and known.heavy == true and known.source == "observed" then
     return nil
   end
-  -- Seeing it for ourselves outranks anyone's report: it is never taken back.
-  best.deathSource = "observed"
+  local death = { target = best.warlock, victim = who, id = bestId, ts = ts, heavy = true, source = "observed" }
+  if not store(self, death, ts) then
+    return nil
+  end
   return death
 end
 
 -- A DEATH message m = {rideId, victim, warlock, secs, source} from sender,
 -- received at ts. secs, the seconds from arrival to death, must be within
--- DEATH_WINDOW. m.source is the sender's say-so and is not used.
+-- DEATH_WINDOW. When the ride's arrival was heard, ts itself must fall within
+-- DEATH_WINDOW (plus a little for transport) after it, whatever secs says.
+-- m.source is the sender's say-so and is not used.
 --   * From the victim, on a ride whose start the victim announced and that
---     names the same warlock: a heavy death, source "self".
+--     names the same warlock: a heavy death, source "self". A victim has one
+--     heavy death at most; a claim on another ride is refused.
 --   * From anyone else: a light death, source "relayed", via = {[sender] = true}.
 -- Returns the death, or nil when the message is malformed, outside the window,
 -- contradicts a known ride, is the victim's own claim about a ride that was
--- never announced, or could not be stored.
+-- never announced or a second heavy death, or could not be stored.
 function Witness:deathReported(m, sender, ts)
   if type(m) ~= "table" then
     return nil
@@ -180,74 +342,102 @@ function Witness:deathReported(m, sender, ts)
     return nil
   end
   local ride = self.rides[rideId]
-  if ride ~= nil and not (Names.same(ride.victim, victim) and Names.same(ride.warlock, warlock)) then
+  if not rideFits(ride, victim, warlock, ts) then
     return nil
   end
 
   local death = { target = warlock, victim = victim, id = rideId, ts = ts }
   if Names.same(from, victim) then
-    if ride == nil then
+    if ride == nil or not heavyAllowed(self, victim, warlock, rideId) then
       return nil
     end
     death.heavy, death.source = true, "self"
   else
     death.heavy, death.source, death.via = false, "relayed", { [from] = true }
   end
-  if not Ratings.addDeath(self.db, death, ts) then
+  if not store(self, death, ts) then
     return nil
   end
-  if death.heavy and ride.deathSource == nil then
-    ride.deathSource = "self"
+  return death
+end
+
+-- A death heard in someone's reply to a query, not in a DEATH message: rec =
+-- {target, victim, id, ts} (ts is when the death happened), relayed by
+-- `relayer`, received at `now`. It is always a light death, source "relayed",
+-- via = {[relayer] = true}; the same checks of the ride id and of a known ride
+-- apply as for a DEATH message. Going through the witness is what lets
+-- aliveEvidence strike the relayer if the victim turns up alive. Returns the
+-- death, or nil when it is malformed, contradicts a known ride, is dated ahead
+-- of now, or could not be stored.
+function Witness:relayedDeath(rec, relayer, now)
+  if type(rec) ~= "table" then
+    return nil
+  end
+  local warlock, victim, from = nameOf(rec.target), nameOf(rec.victim), nameOf(relayer)
+  local rideId, ts = rec.id, rec.ts
+  if not nonEmptyString(rideId) or warlock == nil or victim == nil or from == nil then
+    return nil
+  end
+  if not finite(ts) or not finite(now) or not pairMatches(rideId, warlock, victim) then
+    return nil
+  end
+  if not rideFits(self.rides[rideId], victim, warlock, ts) then
+    return nil
+  end
+  local death = {
+    target = warlock,
+    victim = victim,
+    id = rideId,
+    ts = ts,
+    heavy = false,
+    source = "relayed",
+    via = { [from] = true },
+  }
+  if not store(self, death, now) then
+    return nil
   end
   return death
 end
 
 -- Alive ----------------------------------------------------------------------------
 
--- Where a stored heavy death came from, "self" or "observed", or nil when the
--- witness no longer knows (its ride was forgotten).
-local function sourceOf(rides, target, id, death)
-  local ride = rides[id]
-  if ride ~= nil and Names.same(ride.warlock, target) and Names.same(ride.victim, death.victim) then
-    return ride.deathSource
-  end
-  return nil
-end
-
 -- name was seen alive (they sent something) at time ts. Every stored death of
 -- theirs older than ALIVE_GRACE seconds is then proved false:
---   * the player's own report (heavy, "self"): they lied, so they are marked a
---     liar and the death is removed;
+--   * the player's own report (heavy, stored source "self"): they lied, so they
+--     are marked a liar and the death is removed;
 --   * a relayed report (light): each relayer gets a strike and the death is
 --     removed;
---   * a death this client saw for itself ("observed") is never removed, and
---     neither is a heavy death whose source is no longer known, nor a light one
---     that names no relayer: in doubt the death stays.
--- Returns how many deaths were removed.
+--   * a death this client saw for itself (source "observed") is never removed,
+--     and neither is a heavy death of unknown source, nor a light one that
+--     names no relayer: in doubt the death stays.
+-- The source is the one stored with the death, so this works the same after a
+-- reload. Returns how many deaths were removed.
 function Witness:aliveEvidence(name, ts)
   local who = nameOf(name)
   if who == nil or not finite(ts) then
     return 0
   end
   local db = self.db
+  local byKey = self.deathsOf[who]
+  if byKey == nil then
+    return 0
+  end
 
-  -- Collect first and change afterwards, so the db is not edited mid-traversal.
-  local stale = {}
-  for target, byId in pairs(db.deaths) do
-    if type(target) == "string" and type(byId) == "table" then
-      for id, death in pairs(byId) do
-        if type(id) == "string" and type(death) == "table" and finite(death.ts)
-          and ts - death.ts > Config.ALIVE_GRACE and Names.same(death.victim, who) then
-          stale[#stale + 1] = { target = target, id = id, death = death }
-        end
-      end
+  -- Collect first and change afterwards, so nothing is edited mid-traversal.
+  local stale, gone = {}, {}
+  for key, entry in pairs(byKey) do
+    local death = storedDeath(self, entry.target, entry.id)
+    if death == nil or not Names.same(death.victim, who) then
+      gone[#gone + 1] = entry
+    elseif finite(death.ts) and ts - death.ts > Config.ALIVE_GRACE then
+      stale[#stale + 1] = { target = entry.target, id = entry.id, death = death, key = key }
     end
   end
+  for _, entry in ipairs(gone) do
+    untrack(self, who, entry.target, entry.id)
+  end
   table.sort(stale, function(a, b)
-    if a.target ~= b.target then
-      return a.target < b.target
-    end
-    return a.id < b.id
+    return a.key < b.key
   end)
 
   local removed = 0
@@ -255,7 +445,7 @@ function Witness:aliveEvidence(name, ts)
     local death = s.death
     local refuted = false
     if death.heavy == true then
-      if sourceOf(self.rides, s.target, s.id, death) == "self" then
+      if death.source == "self" then
         Ratings.markLiar(db, who, ts)
         refuted = true
       end
@@ -266,6 +456,7 @@ function Witness:aliveEvidence(name, ts)
       refuted = true
     end
     if refuted and Ratings.removeDeath(db, s.target, s.id) then
+      untrack(self, who, s.target, s.id)
       removed = removed + 1
     end
   end

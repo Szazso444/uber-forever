@@ -404,6 +404,112 @@ describe("Store", function()
       assert.are.equal("junk", db.ratings.Y.trust)
     end)
 
+    describe("deaths", function()
+      local function ids(byId)
+        local out = {}
+        for id in pairs(byId) do
+          out[#out + 1] = tostring(id)
+        end
+        table.sort(out)
+        return out
+      end
+
+      it("caps a warlock's deaths at the Config cap by default", function()
+        local db = S.init(nil)
+        db.deaths.X = {}
+        for i = 1, 502 do
+          db.deaths.X["r" .. i] = { ts = i, heavy = false }
+        end
+        S.prune(db)
+        local n = 0
+        for _ in pairs(db.deaths.X) do
+          n = n + 1
+        end
+        assert.are.equal(500, n)
+        assert.is_nil(db.deaths.X.r1)
+        assert.is_nil(db.deaths.X.r2)
+        assert.is_not_nil(db.deaths.X.r3)
+      end)
+
+      it("drops light deaths before heavy ones, oldest first within each group", function()
+        ns.Config.RATING.CAP_PER_KIND = 3
+        local db = S.init(nil)
+        db.deaths.X = {
+          lateLight = { ts = 5, heavy = false },
+          oldLight = { ts = 1, heavy = false },
+          oldHeavy = { ts = 2, heavy = true },
+          newHeavy = { ts = 9, heavy = true },
+          midLight = { ts = 3, heavy = false },
+        }
+        S.prune(db)
+        assert.are.same({ "lateLight", "newHeavy", "oldHeavy" }, ids(db.deaths.X))
+      end)
+
+      it("drops the oldest heavy deaths only when no light one is left", function()
+        ns.Config.RATING.CAP_PER_KIND = 2
+        local db = S.init(nil)
+        db.deaths.X = {
+          h1 = { ts = 1, heavy = true },
+          h2 = { ts = 2, heavy = true },
+          h3 = { ts = 3, heavy = true },
+          l = { ts = 99, heavy = false },
+        }
+        S.prune(db)
+        assert.are.same({ "h2", "h3" }, ids(db.deaths.X))
+      end)
+
+      it("caps each warlock on its own and leaves a short list alone", function()
+        ns.Config.RATING.CAP_PER_KIND = 2
+        local db = S.init(nil)
+        db.deaths.X = { a = { ts = 1 }, b = { ts = 2 }, c = { ts = 3 } }
+        db.deaths.Y = { a = { ts = 1 }, b = { ts = 2 } }
+        S.prune(db)
+        assert.are.same({ "b", "c" }, ids(db.deaths.X))
+        assert.are.same({ "a", "b" }, ids(db.deaths.Y))
+      end)
+
+      it("breaks a timestamp tie by id, so the result is the same every time", function()
+        ns.Config.RATING.CAP_PER_KIND = 1
+        local db = S.init(nil)
+        db.deaths.X = { a = { ts = 5 }, b = { ts = 5 }, c = { ts = 5 } }
+        S.prune(db)
+        assert.are.same({ "c" }, ids(db.deaths.X))
+      end)
+
+      it("counts a row with a missing or invalid ts, or that is not a table, as the oldest light one", function()
+        ns.Config.RATING.CAP_PER_KIND = 2
+        local db = S.init(nil)
+        db.deaths.X = {
+          junk = "junk",
+          noTs = {},
+          badTs = { ts = "later", heavy = false },
+          a = { ts = 1, heavy = false },
+          b = { ts = 2, heavy = false },
+        }
+        S.prune(db)
+        assert.are.same({ "a", "b" }, ids(db.deaths.X))
+      end)
+
+      it("skips entries that are not death tables, and numeric ids", function()
+        ns.Config.RATING.CAP_PER_KIND = 2
+        local db = S.init({ version = 1, deaths = { X = "junk", Y = { { ts = 1 }, { ts = 2 }, { ts = 3 } } } })
+        S.prune(db)
+        assert.are.equal("junk", db.deaths.X)
+        assert.are.same({ "2", "3" }, ids(db.deaths.Y))
+      end)
+
+      it("does not modify a newer db", function()
+        local saved = { version = 9, deaths = { X = {} } }
+        for i = 1, 520 do
+          saved.deaths.X["r" .. i] = { ts = i }
+        end
+        local db = S.init(saved)
+        local before = deepCopy(db)
+        S.prune(db)
+        assert.are.same(before, db)
+      end)
+    end)
+
     it("does not modify a newer db", function()
       local saved = { version = 9, ratings = { X = { trust = {} } } }
       for i = 1, 520 do saved.ratings.X.trust[i] = { ts = i } end

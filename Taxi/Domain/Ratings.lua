@@ -386,11 +386,28 @@ local function mergeVia(a, b)
   return a
 end
 
--- A death after a summon: d = {target, victim, id, ts, heavy, via}. It is kept
--- in db.deaths[target][id]. A heavy death (first hand) replaces a light one
--- (heard from others); a light one never replaces a heavy one. Returns true,
--- or nil and "bad_record", "future" (dated ahead of now, the receiver's clock;
--- leave it out and the date is not checked) or "readonly".
+-- How much a death's source is believed, weakest first: heard from others
+-- ("relayed"), the victim's own report ("self"), seen by this client
+-- ("observed"). Anything else is taken as "relayed".
+local SOURCE_RANK = { relayed = 1, self = 2, observed = 3 }
+
+-- The source a death is stored with. Only a heavy (first-hand) death can have
+-- a source above "relayed": a light death is second-hand by definition.
+local function sourceFor(heavy, source)
+  if heavy and SOURCE_RANK[source] then
+    return source
+  end
+  return "relayed"
+end
+
+-- A death after a summon: d = {target, victim, id, ts, heavy, source, via}. It
+-- is kept in db.deaths[target][id]. A heavy death (first hand) replaces a light
+-- one (heard from others); a light one never replaces a heavy one. The source
+-- ("self", "observed" or "relayed") is kept with the death so that it survives
+-- a reload; when the same death is added again the stronger source is kept
+-- (observed over self over relayed). Returns true, or nil and "bad_record",
+-- "future" (dated ahead of now, the receiver's clock; leave it out and the date
+-- is not checked) or "readonly".
 function M.addDeath(db, d, now)
   if db._newer then
     return nil, "readonly"
@@ -418,7 +435,16 @@ function M.addDeath(db, d, now)
       end
     end
   end
-  local new = { target = target, victim = victim, id = d.id, ts = d.ts, heavy = d.heavy == true, via = via }
+  local heavy = d.heavy == true
+  local new = {
+    target = target,
+    victim = victim,
+    id = d.id,
+    ts = d.ts,
+    heavy = heavy,
+    source = sourceFor(heavy, d.source),
+    via = via,
+  }
 
   local deaths = db.deaths[target]
   if type(deaths) ~= "table" then
@@ -431,6 +457,9 @@ function M.addDeath(db, d, now)
       return true
     elseif old.heavy == new.heavy then
       old.via = mergeVia(old.via, new.via)
+      if SOURCE_RANK[old.source] == nil or SOURCE_RANK[new.source] > SOURCE_RANK[old.source] then
+        old.source = new.source
+      end
       return true
     end
   end

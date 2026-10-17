@@ -216,7 +216,10 @@ describe("Witness", function()
       db._newer = true
       assert.is_nil(w:observedDeath(VICTIM, ARRIVED + 50))
       nothingStored()
-      assert.is_nil(w.rides[RIDE].deathSource)
+      -- A refused store leaves no trace: once the db can be written, the death counts.
+      db._newer = nil
+      assert.is_not_nil(w:observedDeath(VICTIM, ARRIVED + 51))
+      assert.is_true(db.deaths[WARLOCK][RIDE].heavy)
     end)
   end)
 
@@ -285,7 +288,7 @@ describe("Witness", function()
       assert.is_false(death.heavy)
       assert.are.equal("relayed", death.source)
       assert.is_false(db.deaths[WARLOCK][RIDE].heavy)
-      assert.is_nil(w.rides[RIDE].deathSource)
+      assert.are.equal("relayed", db.deaths[WARLOCK][RIDE].source)
     end)
 
     it("adds up the relayers of one death", function()
@@ -380,7 +383,9 @@ describe("Witness", function()
       assert.is_nil(w:deathReported(report(), VICTIM, T0 + 40))
       assert.is_nil(w:deathReported(report(), RELAYER, T0 + 40))
       nothingStored()
-      assert.is_nil(w.rides[RIDE].deathSource)
+      -- A refused store leaves no trace: once the db can be written, the victim's report is heavy.
+      db._newer = nil
+      assert.is_true(w:deathReported(report(), VICTIM, T0 + 41).heavy)
     end)
   end)
 
@@ -463,26 +468,28 @@ describe("Witness", function()
       assert.is_not_nil(db.deaths[WARLOCK][RIDE])
     end)
 
-    it("leaves a heavy death whose source is unknown alone", function()
-      -- Written straight to the db, with no witness record of where it came from.
+    it("leaves a heavy death with no first-hand source alone", function()
+      -- Written straight to the db (an old save, say), with no source behind it.
       assert.is_true(ns.Ratings.addDeath(db, { target = WARLOCK, victim = VICTIM, id = RIDE, ts = T0, heavy = true }, T0))
+      w = ns.Witness.new(db)
       assert.are.equal(0, w:aliveEvidence(VICTIM, T0 + 600))
       assert.is_nil(db.liars[VICTIM])
       assert.is_not_nil(db.deaths[WARLOCK][RIDE])
     end)
 
-    it("leaves a death with no relayer and no first-hand source alone", function()
+    it("leaves a death with no relayer alone", function()
       assert.is_true(ns.Ratings.addDeath(db, { target = WARLOCK, victim = VICTIM, id = RIDE, ts = T0, heavy = false }, T0))
+      w = ns.Witness.new(db)
       assert.are.equal(0, w:aliveEvidence(VICTIM, T0 + 600))
       assert.is_nil(next(db.strikes))
       assert.is_not_nil(db.deaths[WARLOCK][RIDE])
     end)
 
-    it("takes back a relayed death that came with a query reply too", function()
-      -- Stored by the engine from someone else's records, not through the witness.
+    it("takes back a relayed death that was stored before this witness started", function()
       assert.is_true(ns.Ratings.addDeath(db, {
         target = WARLOCK, victim = VICTIM, id = "old-ride", ts = T0, heavy = false, via = { [RELAYER] = true },
       }, T0))
+      w = ns.Witness.new(db)
       assert.are.equal(1, w:aliveEvidence(VICTIM, T0 + 61))
       assert.are.equal(1, db.strikes[RELAYER])
       nothingStored()
@@ -521,6 +528,7 @@ describe("Witness", function()
       db.deaths.Junk = "not a table"
       db.deaths[WARLOCK] = { bad = "row", worse = { victim = VICTIM }, [1] = { victim = VICTIM, ts = T0 } }
       db.deaths[2] = { r1 = { victim = VICTIM, ts = T0 } }
+      w = ns.Witness.new(db)
       assert.are.equal(0, w:aliveEvidence(VICTIM, T0 + 1000))
       assert.is_nil(next(db.liars))
     end)
@@ -574,6 +582,465 @@ describe("Witness", function()
       assert.are.equal(0, w:expire(nil))
       assert.are.equal(0, w:expire(0 / 0))
       assert.is_not_nil(w.rides.r1)
+    end)
+  end)
+
+  -- Fix round 1 -------------------------------------------------------------------
+
+  local MEMORY = 1800 -- Config.RIDE_MEMORY (checked below, so a change is noticed)
+
+  local function countDeaths()
+    local n = 0
+    for _, byId in pairs(db.deaths) do
+      for _ in pairs(byId) do
+        n = n + 1
+      end
+    end
+    return n
+  end
+
+  -- A ride of VICTIM with another warlock, started at `at` (the id Ride.makeId gives).
+  local SECOND_WARLOCK = "Dar Kbolt"
+  local function secondRide(at)
+    local id = SECOND_WARLOCK .. "@" .. VICTIM .. "@" .. at
+    assert.is_true(w:rideStarted(id, VICTIM, SECOND_WARLOCK, at, VICTIM))
+    return id
+  end
+
+  it("assumes the ride memory the fix-round tests use", function()
+    assert.are.equal(MEMORY, ns.Config.RIDE_MEMORY)
+  end)
+
+  describe("the source of a death is kept in the db (R30)", function()
+    it("stores self, observed and relayed", function()
+      assert.is_true(w:rideStarted(RIDE, VICTIM, WARLOCK, T0, VICTIM))
+      assert.is_not_nil(w:deathReported(report(), VICTIM, T0 + 40))
+      assert.are.equal("self", db.deaths[WARLOCK][RIDE].source)
+
+      local db2 = ns.Store.init(nil)
+      local w2 = ns.Witness.new(db2)
+      assert.is_true(w2:rideStarted(RIDE, VICTIM, WARLOCK, T0, VICTIM))
+      assert.is_true(w2:arrived(RIDE, VICTIM, ARRIVED, VICTIM))
+      assert.is_not_nil(w2:observedDeath(VICTIM, ARRIVED + 5))
+      assert.are.equal("observed", db2.deaths[WARLOCK][RIDE].source)
+
+      local db3 = ns.Store.init(nil)
+      local w3 = ns.Witness.new(db3)
+      assert.is_not_nil(w3:deathReported(report(), RELAYER, T0 + 40))
+      assert.are.equal("relayed", db3.deaths[WARLOCK][RIDE].source)
+    end)
+
+    it("still takes back a self-reported death after its ride left memory", function()
+      assert.is_true(w:rideStarted(RIDE, VICTIM, WARLOCK, T0, VICTIM))
+      assert.is_not_nil(w:deathReported(report(), VICTIM, T0 + 40))
+      assert.are.equal(1, w:expire(T0 + MEMORY + 1))
+      assert.is_nil(next(w.rides))
+      assert.are.equal(1, w:aliveEvidence(VICTIM, T0 + MEMORY + 100))
+      assert.are.equal(T0 + MEMORY + 100, db.liars[VICTIM])
+      nothingStored()
+    end)
+
+    it("still takes back a self-reported death after a reload (a new witness on the same db)", function()
+      assert.is_true(w:rideStarted(RIDE, VICTIM, WARLOCK, T0, VICTIM))
+      assert.is_not_nil(w:deathReported(report(), VICTIM, T0 + 40))
+      w = ns.Witness.new(db)
+      assert.is_nil(next(w.rides))
+      assert.are.equal(1, w:aliveEvidence(VICTIM, T0 + 40 + 61))
+      assert.are.equal(T0 + 40 + 61, db.liars[VICTIM])
+      nothingStored()
+    end)
+
+    it("keeps an observed death after its ride left memory and after a reload", function()
+      arrivedRide()
+      assert.is_not_nil(w:observedDeath(VICTIM, ARRIVED + 5))
+      w:expire(T0 + MEMORY + 1)
+      assert.are.equal(0, w:aliveEvidence(VICTIM, T0 + MEMORY + 100))
+      w = ns.Witness.new(db)
+      assert.are.equal(0, w:aliveEvidence(VICTIM, T0 + MEMORY + 200))
+      assert.is_nil(next(db.liars))
+      assert.are.equal("observed", db.deaths[WARLOCK][RIDE].source)
+    end)
+
+    it("keeps a death that was reported by the victim and then seen by this client, after a reload", function()
+      arrivedRide()
+      assert.is_not_nil(w:deathReported(report(), VICTIM, ARRIVED + 40))
+      assert.is_not_nil(w:observedDeath(VICTIM, ARRIVED + 41))
+      assert.are.equal("observed", db.deaths[WARLOCK][RIDE].source)
+      w = ns.Witness.new(db)
+      assert.are.equal(0, w:aliveEvidence(VICTIM, ARRIVED + 3600))
+      assert.is_nil(next(db.liars))
+    end)
+
+    it("does not let the victim's own report lower an observed death", function()
+      arrivedRide()
+      assert.is_not_nil(w:observedDeath(VICTIM, ARRIVED + 40))
+      assert.is_not_nil(w:deathReported(report(), VICTIM, ARRIVED + 41))
+      assert.are.equal("observed", db.deaths[WARLOCK][RIDE].source)
+    end)
+  end)
+
+  describe("a Hardcore character dies once (R32)", function()
+    local function firstDeath()
+      assert.is_true(w:rideStarted(RIDE, VICTIM, WARLOCK, T0, VICTIM))
+      assert.is_true(w:deathReported(report(), VICTIM, T0 + 40).heavy)
+    end
+
+    it("a second ride start and death report from the same victim is not heavy", function()
+      firstDeath()
+      local second = secondRide(T0 + 100)
+      local m = report({ rideId = second, warlock = SECOND_WARLOCK, secs = 5 })
+      assert.is_nil(w:deathReported(m, VICTIM, T0 + 110))
+      assert.is_nil(db.deaths[SECOND_WARLOCK])
+      assert.are.equal(1, countDeaths())
+      assert.are.equal(0, ns.Ratings.summary(db, SECOND_WARLOCK, "trust").deathsReported)
+    end)
+
+    it("holds after a reload, because it is checked against the stored deaths", function()
+      firstDeath()
+      w = ns.Witness.new(db)
+      local second = secondRide(T0 + 100)
+      assert.is_nil(w:deathReported(report({ rideId = second, warlock = SECOND_WARLOCK, secs = 5 }), VICTIM, T0 + 110))
+      assert.are.equal(1, countDeaths())
+    end)
+
+    it("a victim minting rides with fresh ids gets one heavy death in all", function()
+      local heavy = 0
+      for i = 1, 50 do
+        local now = T0 + i * (MEMORY + 1)
+        w:expire(now)
+        local id = secondRide(now)
+        if w:deathReported(report({ rideId = id, warlock = SECOND_WARLOCK, secs = 5 }), VICTIM, now + 5) then
+          heavy = heavy + 1
+        end
+      end
+      assert.are.equal(1, heavy)
+      assert.are.equal(1, countDeaths())
+      assert.are.equal(1, ns.Ratings.summary(db, SECOND_WARLOCK, "trust").deathsReported)
+    end)
+
+    it("the same minting across several warlocks and reloads is still one", function()
+      local heavy = 0
+      for i = 1, 20 do
+        local now = T0 + i * (MEMORY + 1)
+        w = ns.Witness.new(db)
+        local warlock = "Dar Kbolt" .. string.char(64 + i)
+        local id = warlock .. "@" .. VICTIM .. "@" .. now
+        assert.is_true(w:rideStarted(id, VICTIM, warlock, now, VICTIM))
+        if w:deathReported(report({ rideId = id, warlock = warlock, secs = 5 }), VICTIM, now + 5) then
+          heavy = heavy + 1
+        end
+      end
+      assert.are.equal(1, heavy)
+      assert.are.equal(1, countDeaths())
+    end)
+
+    it("an observed death on a second ride is not heavy either", function()
+      firstDeath()
+      assert.is_true(w:arrived(RIDE, VICTIM, ARRIVED, VICTIM))
+      local second = secondRide(T0 + 300)
+      assert.is_true(w:arrived(second, VICTIM, T0 + 310, VICTIM))
+      assert.is_nil(w:observedDeath(VICTIM, T0 + 320))
+      assert.is_nil(db.deaths[SECOND_WARLOCK])
+      assert.are.equal(1, countDeaths())
+    end)
+
+    it("does the same for a first heavy death that was observed", function()
+      arrivedRide()
+      assert.is_not_nil(w:observedDeath(VICTIM, ARRIVED + 5))
+      local second = secondRide(ARRIVED + 100)
+      assert.is_nil(w:deathReported(report({ rideId = second, warlock = SECOND_WARLOCK, secs = 5 }), VICTIM, ARRIVED + 110))
+      assert.are.equal(1, countDeaths())
+    end)
+
+    it("reads the first death from a db that already has it", function()
+      assert.is_true(ns.Ratings.addDeath(db, {
+        target = WARLOCK, victim = VICTIM, id = RIDE, ts = T0, heavy = true, source = "self",
+      }, T0))
+      w = ns.Witness.new(db)
+      local second = secondRide(T0 + 100)
+      assert.is_nil(w:deathReported(report({ rideId = second, warlock = SECOND_WARLOCK, secs = 5 }), VICTIM, T0 + 110))
+      assert.are.equal(1, countDeaths())
+    end)
+
+    it("still takes the same ride's death again, as one death", function()
+      firstDeath()
+      assert.is_not_nil(w:deathReported(report(), VICTIM, T0 + 41))
+      assert.is_not_nil(w:deathReported(report(), RELAYER, T0 + 42))
+      assert.are.equal(1, countDeaths())
+    end)
+
+    it("does not limit other victims, or relayed (light) deaths", function()
+      firstDeath()
+      local other = WARLOCK .. "@Mal Ice@" .. T0
+      assert.is_true(w:rideStarted(other, "Mal Ice", WARLOCK, T0, "Mal Ice"))
+      assert.is_true(w:deathReported(report({ rideId = other, victim = "Mal Ice" }), "Mal Ice", T0 + 40).heavy)
+      for i = 1, 5 do
+        local id = SECOND_WARLOCK .. "@" .. VICTIM .. "@" .. (T0 + 1000 + i)
+        local death = w:deathReported(report({ rideId = id, warlock = SECOND_WARLOCK }), RELAYER, T0 + 1000 + i)
+        assert.is_false(death.heavy)
+      end
+      assert.are.equal(7, countDeaths())
+    end)
+
+    it("frees the slot when the death is taken back", function()
+      firstDeath()
+      assert.are.equal(1, w:aliveEvidence(VICTIM, T0 + 40 + 61))
+      nothingStored()
+      local second = secondRide(T0 + 200)
+      assert.is_true(w:arrived(second, VICTIM, T0 + 210, VICTIM))
+      assert.is_not_nil(w:observedDeath(VICTIM, T0 + 220))
+      assert.are.equal(1, countDeaths())
+    end)
+
+    it("notices a heavy death that was taken out of the db behind its back", function()
+      firstDeath()
+      assert.is_true(ns.Ratings.removeDeath(db, WARLOCK, RIDE))
+      local second = secondRide(T0 + 100)
+      assert.is_true(w:deathReported(report({ rideId = second, warlock = SECOND_WARLOCK, secs = 5 }), VICTIM, T0 + 110).heavy)
+    end)
+
+    it("is not fooled by a failed store", function()
+      assert.is_true(w:rideStarted(RIDE, VICTIM, WARLOCK, T0, VICTIM))
+      db._newer = true
+      assert.is_nil(w:deathReported(report(), VICTIM, T0 + 40))
+      db._newer = nil
+      local second = secondRide(T0 + 100)
+      assert.is_true(w:deathReported(report({ rideId = second, warlock = SECOND_WARLOCK, secs = 5 }), VICTIM, T0 + 110).heavy)
+    end)
+  end)
+
+  describe("open rides per victim (R32)", function()
+    local function start(i)
+      local id = WARLOCK .. "@" .. VICTIM .. "@" .. (T0 + i)
+      return id, w:rideStarted(id, VICTIM, WARLOCK, T0 + i, VICTIM)
+    end
+
+    local function openRides()
+      local n = 0
+      for _ in pairs(w.rides) do
+        n = n + 1
+      end
+      return n
+    end
+
+    it("keeps at most 3 open rides from a flood of ride starts", function()
+      local accepted = {}
+      for i = 1, 50 do
+        local id, ok = start(i)
+        if ok then
+          accepted[#accepted + 1] = id
+        end
+      end
+      assert.are.equal(3, #accepted)
+      assert.are.equal(3, openRides())
+      for _, id in ipairs(accepted) do
+        assert.is_not_nil(w.rides[id])
+      end
+      assert.are.equal(WARLOCK .. "@" .. VICTIM .. "@" .. (T0 + 1), accepted[1])
+      assert.are.equal(WARLOCK .. "@" .. VICTIM .. "@" .. (T0 + 3), accepted[3])
+    end)
+
+    it("hearing a known ride's start again is still fine at the limit", function()
+      for i = 1, 3 do
+        assert.is_true(select(2, start(i)))
+      end
+      assert.is_true(select(2, start(2)))
+      assert.is_false(select(2, start(4)))
+    end)
+
+    it("takes new ride starts again once one expires", function()
+      for i = 1, 3 do
+        assert.is_true(select(2, start(i)))
+      end
+      assert.is_false(select(2, start(4)))
+      assert.are.equal(1, w:expire(T0 + 1 + MEMORY + 1))
+      assert.is_true(select(2, start(5)))
+      assert.is_false(select(2, start(6)))
+      assert.are.equal(3, openRides())
+    end)
+
+    it("limits each victim on its own", function()
+      for i = 1, 10 do
+        start(i)
+      end
+      local other = WARLOCK .. "@Mal Ice@" .. T0
+      assert.is_true(w:rideStarted(other, "Mal Ice", WARLOCK, T0, "Mal Ice"))
+      assert.are.equal(4, openRides())
+    end)
+
+    it("still finds a death on a ride that was kept", function()
+      for i = 1, 6 do
+        start(i)
+      end
+      local id = WARLOCK .. "@" .. VICTIM .. "@" .. (T0 + 2)
+      assert.is_true(w:arrived(id, VICTIM, T0 + 20, VICTIM))
+      assert.are.equal(id, w:observedDeath(VICTIM, T0 + 30).id)
+    end)
+  end)
+
+  describe("no walking of everything (R34)", function()
+    it("aliveEvidence finds a victim's deaths through an index, not by walking db.deaths", function()
+      assert.is_true(w:rideStarted(RIDE, VICTIM, WARLOCK, T0, VICTIM))
+      assert.is_not_nil(w:deathReported(report(), VICTIM, T0 + 40))
+      assert.is_not_nil(w:deathReported(report({ rideId = "r-light", victim = "Mal Ice" }), RELAYER, T0 + 41))
+      -- pairs() over a stand-in that only forwards lookups sees nothing, so a
+      -- walk of db.deaths finds no death at all.
+      local real = db.deaths
+      db.deaths = setmetatable({}, { __index = real })
+      assert.are.equal(1, w:aliveEvidence(VICTIM, T0 + 40 + 61))
+      assert.is_not_nil(db.liars[VICTIM])
+      assert.is_nil(real[WARLOCK][RIDE])
+      assert.is_not_nil(real[WARLOCK]["r-light"], "another victim's death is left alone")
+    end)
+
+    it("observedDeath finds a victim's rides through a map of their own, not by walking every ride", function()
+      arrivedRide()
+      local real = w.rides
+      w.rides = setmetatable({}, { __index = real })
+      local death = w:observedDeath(VICTIM, ARRIVED + 5)
+      assert.is_not_nil(death)
+      assert.are.equal(RIDE, death.id)
+    end)
+
+    it("keeps its indexes in step when rides expire and deaths are taken back", function()
+      assert.is_true(w:rideStarted(RIDE, VICTIM, WARLOCK, T0, VICTIM))
+      assert.is_true(w:arrived(RIDE, VICTIM, ARRIVED, VICTIM))
+      assert.are.equal(1, w:expire(T0 + MEMORY + 1))
+      assert.is_nil(w:observedDeath(VICTIM, ARRIVED + 5))
+      assert.is_nil(w:deathReported(report(), VICTIM, ARRIVED + 5))
+      nothingStored()
+    end)
+  end)
+
+  describe("the arrival time bounds a report (R33)", function()
+    it("rejects a self report long after the arrival, whatever secs says", function()
+      arrivedRide()
+      assert.is_nil(w:deathReported(report({ secs = 5 }), VICTIM, ARRIVED + 25 * 60))
+      nothingStored()
+    end)
+
+    it("rejects a relayed report long after a known arrival too", function()
+      arrivedRide()
+      assert.is_nil(w:deathReported(report({ secs = 5 }), RELAYER, ARRIVED + 25 * 60))
+      nothingStored()
+    end)
+
+    it("allows the death window plus 30 s of transport slack, to the second", function()
+      arrivedRide()
+      assert.is_nil(w:deathReported(report({ secs = 5 }), VICTIM, ARRIVED + 151))
+      nothingStored()
+      assert.is_true(w:deathReported(report({ secs = 5 }), VICTIM, ARRIVED + 150).heavy)
+      assert.is_true(w:deathReported(report({ secs = 5 }), VICTIM, ARRIVED).heavy)
+    end)
+
+    it("rejects a report that is stamped before the arrival", function()
+      arrivedRide()
+      assert.is_nil(w:deathReported(report({ secs = 5 }), VICTIM, ARRIVED - 1))
+      assert.is_nil(w:deathReported(report({ secs = 5 }), RELAYER, ARRIVED - 1))
+      nothingStored()
+    end)
+
+    it("keeps the claimed secs rule when no arrival was heard", function()
+      assert.is_true(w:rideStarted(RIDE, VICTIM, WARLOCK, T0, VICTIM))
+      assert.is_true(w:deathReported(report({ secs = 120 }), VICTIM, T0 + 3600).heavy)
+      assert.is_nil(w:deathReported(report({ secs = 121 }), VICTIM, T0 + 3600))
+    end)
+
+    it("does not touch a relayed report about a ride this client never heard", function()
+      assert.is_false(w:deathReported(report({ secs = 5 }), RELAYER, T0 + 3600).heavy)
+    end)
+  end)
+
+  describe("relayedDeath", function()
+    local function rec(fields)
+      local r = { target = WARLOCK, victim = VICTIM, id = RIDE, ts = T0 + 30 }
+      for k, v in pairs(fields or {}) do
+        r[k] = v
+      end
+      return r
+    end
+
+    it("stores a death from a query reply as light, relayed by the sender", function()
+      local death = w:relayedDeath(rec(), RELAYER, T0 + 100)
+      assert.are.same({
+        target = WARLOCK,
+        victim = VICTIM,
+        id = RIDE,
+        ts = T0 + 30,
+        heavy = false,
+        source = "relayed",
+        via = { [RELAYER] = true },
+      }, death)
+      local stored = db.deaths[WARLOCK][RIDE]
+      assert.is_false(stored.heavy)
+      assert.are.same({ [RELAYER] = true }, stored.via)
+      assert.are.equal("relayed", stored.source)
+    end)
+
+    it("is taken back, and the relayer struck, when the victim is seen alive", function()
+      assert.is_not_nil(w:relayedDeath(rec(), RELAYER, T0 + 100))
+      assert.are.equal(1, w:aliveEvidence(VICTIM, T0 + 30 + 61))
+      assert.are.equal(1, db.strikes[RELAYER])
+      nothingStored()
+    end)
+
+    it("never makes a heavy death, even for the victim's own name or a known ride", function()
+      assert.is_true(w:rideStarted(RIDE, VICTIM, WARLOCK, T0, VICTIM))
+      assert.is_false(w:relayedDeath(rec(), RELAYER, T0 + 100).heavy)
+      assert.is_false(db.deaths[WARLOCK][RIDE].heavy)
+      assert.is_false(w:relayedDeath(rec({ id = "other-ride" }), VICTIM, T0 + 100).heavy)
+    end)
+
+    it("does not weaken a first-hand death", function()
+      assert.is_true(w:rideStarted(RIDE, VICTIM, WARLOCK, T0, VICTIM))
+      assert.is_not_nil(w:deathReported(report(), VICTIM, T0 + 30))
+      assert.is_not_nil(w:relayedDeath(rec(), RELAYER, T0 + 100))
+      assert.is_true(db.deaths[WARLOCK][RIDE].heavy)
+      assert.are.equal("self", db.deaths[WARLOCK][RIDE].source)
+    end)
+
+    it("refuses a ride id that names other players than the record does", function()
+      assert.is_nil(w:relayedDeath(rec({ victim = "Liar Larry" }), RELAYER, T0 + 100))
+      assert.is_nil(w:relayedDeath(rec({ target = "Dar Kbolt" }), RELAYER, T0 + 100))
+      nothingStored()
+    end)
+
+    it("must agree with a ride this client knows, and with its arrival", function()
+      assert.is_true(w:rideStarted("r1", VICTIM, WARLOCK, T0, VICTIM))
+      assert.is_nil(w:relayedDeath(rec({ id = "r1", victim = "Liar Larry" }), RELAYER, T0 + 100))
+      assert.is_nil(w:relayedDeath(rec({ id = "r1", target = "Dar Kbolt" }), RELAYER, T0 + 100))
+      assert.is_true(w:arrived("r1", VICTIM, T0 + 10, VICTIM))
+      assert.is_nil(w:relayedDeath(rec({ id = "r1", ts = T0 + 10 + 1500 }), RELAYER, T0 + 3000))
+      assert.is_nil(w:relayedDeath(rec({ id = "r1", ts = T0 + 9 }), RELAYER, T0 + 3000))
+      nothingStored()
+      assert.is_not_nil(w:relayedDeath(rec({ id = "r1", ts = T0 + 10 + 150 }), RELAYER, T0 + 3000))
+    end)
+
+    it("fails closed on a malformed record, relayer or time", function()
+      for _, fields in ipairs({
+        { target = "" }, { victim = "  " }, { victim = 5 }, { id = "" }, { id = 5 },
+        { ts = "now" }, { ts = 0 / 0 }, { ts = math.huge },
+      }) do
+        assert.is_nil(w:relayedDeath(rec(fields), RELAYER, T0 + 100))
+      end
+      assert.is_nil(w:relayedDeath(nil, RELAYER, T0 + 100))
+      assert.is_nil(w:relayedDeath("death", RELAYER, T0 + 100))
+      assert.is_nil(w:relayedDeath(rec(), nil, T0 + 100))
+      assert.is_nil(w:relayedDeath(rec(), "  ", T0 + 100))
+      assert.is_nil(w:relayedDeath(rec(), RELAYER, nil))
+      assert.is_nil(w:relayedDeath(rec(), RELAYER, 0 / 0))
+      nothingStored()
+    end)
+
+    it("refuses a death dated ahead of the receiver's clock", function()
+      assert.is_nil(w:relayedDeath(rec({ ts = T0 + 100 + 301 }), RELAYER, T0 + 100))
+      nothingStored()
+    end)
+
+    it("returns nil when the db is read-only", function()
+      db._newer = true
+      assert.is_nil(w:relayedDeath(rec(), RELAYER, T0 + 100))
+      nothingStored()
     end)
   end)
 end)

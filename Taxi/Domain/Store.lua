@@ -139,10 +139,46 @@ local function trim(list, cap)
   end
 end
 
--- Cap every warlock's trust and share lists at RATING.CAP_PER_KIND, dropping
--- relayed records before direct ones and the oldest first within each. Nothing
--- else is pruned: `given` in particular is kept for good. A newer db is not
--- touched.
+-- The order deaths are dropped in: light (non-heavy) before heavy, oldest first
+-- within each group, then by id so the result is the same every time.
+local function deathDroppedFirst(a, b)
+  if a.heavy ~= b.heavy then
+    return not a.heavy
+  end
+  if a.ts ~= b.ts then
+    return a.ts < b.ts
+  end
+  return a.key < b.key
+end
+
+-- Drop deaths of one warlock (a table of death records by ride id), in place,
+-- until at most cap are left. A row that is not a record counts as the oldest
+-- light death.
+local function trimDeaths(byId, cap)
+  local ranked = {}
+  for id, death in pairs(byId) do
+    ranked[#ranked + 1] = {
+      id = id,
+      key = tostring(id),
+      ts = timestamp(death),
+      heavy = type(death) == "table" and death.heavy == true,
+    }
+  end
+  local n = #ranked
+  if n <= cap then
+    return
+  end
+  table.sort(ranked, deathDroppedFirst)
+  for i = 1, n - cap do
+    byId[ranked[i].id] = nil
+  end
+end
+
+-- Cap every warlock's trust and share lists, and the deaths on file for each
+-- warlock, at RATING.CAP_PER_KIND. Ratings drop relayed records before direct
+-- ones and the oldest first within each; deaths drop light ones before heavy
+-- ones, the oldest first within each. Nothing else is pruned: `given` in
+-- particular is kept for good. A newer db is not touched.
 function M.prune(db)
   if db._newer then
     return
@@ -155,6 +191,11 @@ function M.prune(db)
           trim(entry[kind], cap)
         end
       end
+    end
+  end
+  for _, byId in pairs(db.deaths) do
+    if type(byId) == "table" then
+      trimDeaths(byId, cap)
     end
   end
 end

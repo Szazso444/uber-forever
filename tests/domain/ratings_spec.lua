@@ -699,6 +699,68 @@ describe("Ratings", function()
       assert.is_nil(shareSummary().stars)
     end)
 
+    describe("source", function()
+      local function stored()
+        return db.deaths["Ana Smith"].r1
+      end
+
+      it("keeps the source of a first-hand death", function()
+        assert.is_true(R.addDeath(db, death({ source = "self" })))
+        assert.are.equal("self", stored().source)
+        db.deaths = {}
+        assert.is_true(R.addDeath(db, death({ source = "observed" })))
+        assert.are.equal("observed", stored().source)
+      end)
+
+      it("takes anything but self and observed as relayed", function()
+        for _, source in ipairs({ "relayed", "group", "server", "", "Self", 5, true }) do
+          db.deaths = {}
+          assert.is_true(R.addDeath(db, death({ source = source })))
+          assert.are.equal("relayed", stored().source, tostring(source))
+        end
+        db.deaths = {}
+        assert.is_true(R.addDeath(db, death()))
+        assert.are.equal("relayed", stored().source, "no source given")
+      end)
+
+      it("makes a light death relayed whatever source it claims", function()
+        assert.is_true(R.addDeath(db, death({ heavy = false, via = { ["Rel Ay"] = true }, source = "observed" })))
+        assert.are.equal("relayed", stored().source)
+        assert.is_false(stored().heavy)
+      end)
+
+      it("keeps the stronger source when the same death is added again", function()
+        assert.is_true(R.addDeath(db, death({ source = "self" })))
+        assert.is_true(R.addDeath(db, death({ source = "observed" })))
+        assert.are.equal("observed", stored().source)
+        assert.is_true(R.addDeath(db, death({ source = "self" })))
+        assert.are.equal("observed", stored().source, "a weaker report does not lower it")
+        assert.is_true(R.addDeath(db, death({ source = "relayed" })))
+        assert.are.equal("observed", stored().source)
+      end)
+
+      it("lets a self report outrank an unknown source", function()
+        assert.is_true(R.addDeath(db, death()))
+        assert.is_true(R.addDeath(db, death({ source = "self" })))
+        assert.are.equal("self", stored().source)
+      end)
+
+      it("replaces a light death with a first-hand one and its source", function()
+        assert.is_true(R.addDeath(db, death({ heavy = false, via = { ["Rel Ay"] = true } })))
+        assert.are.equal("relayed", stored().source)
+        assert.is_true(R.addDeath(db, death({ source = "self" })))
+        assert.are.equal("self", stored().source)
+        assert.is_true(stored().heavy)
+      end)
+
+      it("never lets a light death lower a heavy one's source", function()
+        assert.is_true(R.addDeath(db, death({ source = "observed" })))
+        assert.is_true(R.addDeath(db, death({ heavy = false, via = { ["Rel Ay"] = true } })))
+        assert.are.equal("observed", stored().source)
+        assert.is_true(stored().heavy)
+      end)
+    end)
+
     it("removeDeath takes a death back", function()
       assert.is_true(R.addDeath(db, death()))
       assert.is_true(R.addDeath(db, death({ id = "r2" })))
