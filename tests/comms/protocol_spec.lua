@@ -50,14 +50,20 @@ describe("Protocol", function()
   }
 
   -- What decode should give back for the fields passed to encode: an empty
-  -- string or an empty list is an empty wire field, which decodes to nil.
-  local function expectedFields(fields)
+  -- string is an empty wire field, which decodes to nil. A list or record
+  -- field that was nil or empty decodes to {}, never to nil.
+  local function expectedFields(msgType, fields)
     local out = {}
     for name, value in pairs(fields) do
-      if value == "" or (type(value) == "table" and #value == 0) then
+      if value == "" then
         value = nil
       end
       out[name] = value
+    end
+    for _, field in ipairs(P.SCHEMAS[msgType]) do
+      if (field[2] == "L" or field[2] == "R") and out[field[1]] == nil then
+        out[field[1]] = {}
+      end
     end
     return out
   end
@@ -231,7 +237,7 @@ describe("Protocol", function()
         assert.are.equal(P.VERSION, decoded.v, label)
         assert.are.equal(msgType, decoded.type, label)
         assert.are.equal("id-" .. index, decoded.msgId, label)
-        local expected = expectedFields(fields)
+        local expected = expectedFields(msgType, fields)
         for _, field in ipairs(P.SCHEMAS[msgType]) do
           assert.are.same(expected[field[1]], decoded[field[1]], label .. "." .. field[1])
         end
@@ -264,10 +270,32 @@ describe("Protocol", function()
       }, names)
     end)
 
-    it("keeps empty fields nil, including an empty string", function()
+    it("keeps empty s and n fields nil, including an empty string", function()
       local m = P.decode(P.encode("STAND", "a", { standId = "s", zone = "", note = nil }))
       assert.are.equal("s", m.standId)
-      assert.is_nil(m.zone); assert.is_nil(m.note); assert.is_nil(m.mapID); assert.is_nil(m.portals)
+      assert.is_nil(m.zone); assert.is_nil(m.note); assert.is_nil(m.mapID); assert.is_nil(m.x)
+    end)
+
+    it("decodes empty L and R fields to {}, never nil", function()
+      -- An honest lock stand sends portals = {}; a handler must be able to ipairs it.
+      local stand = P.decode(P.encode("STAND", "a", { standId = "s", portals = {} }))
+      assert.are.same({}, stand.portals)
+      local bare = P.decode(P.encode("STAND", "a", {}))
+      assert.are.same({}, bare.portals)
+      assert.is_nil(bare.standId); assert.is_nil(bare.note)
+      local reply = P.decode(P.encode("QUERY_R", "q", { target = "t", records = {} }))
+      assert.are.same({}, reply.records)
+      local missing = P.decode(P.encode("QUERY_R", "q", { target = "t" }))
+      assert.are.same({}, missing.records)
+      for _ in ipairs(stand.portals) do error("empty portals must not iterate") end
+      for _ in ipairs(reply.records) do error("empty records must not iterate") end
+    end)
+
+    it("gives each decoded message its own empty tables", function()
+      local one = P.decode(P.encode("STAND", "a", {}))
+      local two = P.decode(P.encode("STAND", "a", {}))
+      one.portals[1] = "stormwind"
+      assert.are.same({}, two.portals)
     end)
 
     it("round-trips numbers exactly", function()
@@ -318,9 +346,9 @@ describe("Protocol", function()
       assert.are.same({ kind = "trust", rater = "Ana Smith", stars = 5 }, m.records[2])
     end)
 
-    it("decodes an empty record list to nil", function()
+    it("decodes an empty record list to {}", function()
       local m = P.decode(P.encode("QUERY_R", "q", { target = "t", records = {} }))
-      assert.are.equal("t", m.target); assert.is_nil(m.records)
+      assert.are.equal("t", m.target); assert.are.same({}, m.records)
     end)
 
     it("rejects a record with the wrong number of fields", function()
@@ -350,14 +378,14 @@ describe("Protocol", function()
 
     it("drops a record with every field empty", function()
       local m = P.decode("1^QUERY_R^q^t^,,,,,,,,")
-      assert.are.equal("t", m.target); assert.is_nil(m.records)
+      assert.are.equal("t", m.target); assert.are.same({}, m.records)
       m = P.decode("1^QUERY_R^q^t^,,,,,,,,;trust,Ana,5,r1,100,,,,;,,,,,,,,")
       assert.are.equal(1, #m.records); assert.are.equal("Ana", m.records[1].rater)
     end)
 
     it("skips empty list items", function()
       assert.are.same({ "a", "b" }, P.decode("1^STAND^a" .. string.rep("^", 14) .. ",a,,b,^").portals)
-      assert.is_nil(P.decode("1^STAND^a" .. string.rep("^", 14) .. ",,^").portals)
+      assert.are.same({}, P.decode("1^STAND^a" .. string.rep("^", 14) .. ",,^").portals)
     end)
   end)
 
@@ -484,6 +512,9 @@ describe("Protocol", function()
         for _, field in ipairs(schema) do
           local value = m[field[1]]
           local kind = field[2]
+          if kind == "L" or kind == "R" then
+            assert.are.equal("table", type(value), field[1])
+          end
           if value ~= nil then
             if kind == "s" then
               assert.are.equal("string", type(value)); assert.is_truthy(#value > 0)
@@ -491,7 +522,6 @@ describe("Protocol", function()
               assert.are.equal("number", type(value))
               assert.is_true(value == value and value ~= math.huge and value ~= -math.huge)
             else
-              assert.are.equal("table", type(value)); assert.is_truthy(#value > 0)
               for _, item in ipairs(value) do
                 if kind == "L" then
                   assert.are.equal("string", type(item)); assert.is_truthy(#item > 0)

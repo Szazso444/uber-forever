@@ -6,12 +6,13 @@ local _, ns = ...
 --   1^TYPE^msgId^field1^field2^...
 --
 -- The fields follow the schema of TYPE in order, so the order is part of the
--- format. Every field is present, and an empty one is nil. Field kinds:
---   s  string
---   n  number (tostring/tonumber, so integers and map coordinates survive)
---   L  list of strings, items joined with ","
+-- format. Every field is present. Field kinds:
+--   s  string (empty decodes to nil)
+--   n  number (empty decodes to nil; tostring/tonumber, so integers and map
+--      coordinates survive)
+--   L  list of strings, items joined with "," (empty decodes to {})
 --   R  list of records, records joined with ";", record fields (M.RECORD)
---      joined with ","
+--      joined with "," (empty decodes to {})
 -- The characters % ^ , ; | and newline never appear raw inside a value: they
 -- are written as %25 %5E %2C %3B %7C %0A. ("|" is WoW's chat escape.)
 --
@@ -232,7 +233,7 @@ local function decodeList(text)
       list[#list + 1] = item
     end
   end
-  return true, list[1] and list or nil
+  return true, list
 end
 
 local function decodeRecords(text)
@@ -258,7 +259,7 @@ local function decodeRecords(text)
       end
     end
   end
-  return true, records[1] and records or nil
+  return true, records
 end
 
 local function decodeField(text, kind)
@@ -275,8 +276,9 @@ end
 --                   bad number, missing msgId, not a string at all)
 --   "version"       another protocol version; the third result is that version
 --   "unknown_type"  a type this client does not know
--- msg is {v, type, msgId, <field> = value}. Empty fields are nil, numbers are
--- numbers, and a list or record field with nothing in it is nil too.
+-- msg is {v, type, msgId, <field> = value}. Numbers are numbers. An empty s or
+-- n field is nil, but an L or R field is always a table, {} when it is empty,
+-- so a handler can ipairs it without a nil check.
 function M.decode(text)
   if type(text) ~= "string" then
     return nil, "malformed"
