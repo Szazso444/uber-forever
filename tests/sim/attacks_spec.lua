@@ -1,0 +1,383 @@
+-- Attack scenarios: whole Taxi clients (Engine + Transport) on the simulated
+-- World and Bus, with the attacker's moves made through real messages. Each
+-- scenario's expected numbers are worked out from Config, so a retuned weight
+-- changes the sum and not the story. Every scenario ends with no engine error
+-- logged (R15).
+
+-- The events p's engine emitted with this name, and the last of them.
+local function emitted(p, name)
+  local out = {}
+  for _, ev in ipairs(p.events) do
+    if ev[1] == name then out[#out + 1] = ev end
+  end
+  return out
+end
+local function last(p, name)
+  local list = emitted(p, name)
+  return list[#list]
+end
+
+-- The trust ratings on file about target.
+local function trust(db, target) return (db.ratings[target] or {}).trust or {} end
+
+-- The score the rating rules give for parts = { {stars, weight}, ... }.
+local function scoreOf(ns, parts)
+  local C = ns.Config.RATING
+  local sumW, sumWS = 0, 0
+  for _, part in ipairs(parts) do
+    sumW, sumWS = sumW + part[2], sumWS + part[2] * part[1]
+  end
+  return (C.PRIOR_WEIGHT * C.PRIOR_MEAN + sumWS) / (C.PRIOR_WEIGHT + sumW)
+end
+
+-- A summon ride up to the traveler's arrival: the traveler asks the stand, the
+-- warlock accepts, the traveler joins the group, the warlock summons and the
+-- traveler accepts. Returns the traveler's ride.
+local function rideTo(w, lock, p, standId)
+  local ride = assert(p.engine:requestRide(standId, 0)); w:advance(2)
+  assert(lock.engine:acceptRequest(p.name .. "#" .. standId)); w:advance(2)
+  assert.is_true(w:acceptInvite(p.name)); w:advance(2)
+  w:offerSummon(lock.name, p.name); w:advance(1)
+  assert.is_true(w:acceptSummon(p.name))
+  assert.are.equal("arrived", ride.state)
+  return ride
+end
+
+-- The check of a guard verdict with this id.
+local function check(verdict, id)
+  for _, c in ipairs(verdict.checks) do
+    if c.id == id then return c end
+  end
+end
+
+describe("alt ring", function()
+  local ns, w, lock, honest, obs, alts, stand
+  before_each(function()
+    ns = Taxi.load(); w = ns.World.new{seed = 31, start = 200000}
+    lock = w:addPlayer{name = "Bad Lock", class = "WARLOCK", level = 45, place = "gadgetzan"}
+    honest = w:addPlayer{name = "Hon Est", class = "HUNTER", level = 44, place = "ironforge", money = 50000}
+    obs = w:addPlayer{name = "Fre Sh", class = "ROGUE", level = 44, place = "ironforge"} -- fresh db, hears everything
+    alts = {}
+    for i = 1, 10 do
+      alts[i] = w:addPlayer{name = "Ring Alt" .. string.char(96 + i), class = "MAGE", level = 30, place = "ironforge"}
+    end
+    stand = lock.engine:openStand{kind = "lock"}; w:advance(2)
+  end)
+  after_each(function() assert.are.same({}, w.errors) end)
+
+  it("ten alts with no ride logs are outweighed by one honest 1-star and one death: score under 3.0, trust check YELLOW", function()
+    local C = ns.Config
+    -- Each alt rates 5 stars on its own account; none rode, so the warlock's ride
+    -- log names none of them and each counts one-sided (W_ONE_SIDED), once.
+    local ts = math.floor(w.clock:now())
+    for _, alt in ipairs(alts) do
+      alt.engine:send("RATING", {kind = "trust", target = "Bad Lock", stars = 5,
+        id = ns.Ride.makeId("Bad Lock", alt.name, ts), ts = ts}, "CHANNEL")
+    end
+    w:advance(2)
+    local ring = obs.engine:summary("Bad Lock", "trust")
+    assert.are.equal(10, #trust(obs.db, "Bad Lock"))
+    assert.are.same({5, false}, {ring.stars, ring.isNew}) -- ten direct ratings clear "New"
+    assert.is_true(ring.score >= C.GUARD_LOW_TRUST)       -- the known limit: the ring alone passes the guard
+
+    -- One honest rider: a real ride, a 1-star rating (two-sided, the warlock's
+    -- RIDE_LOG names him) and, 30 s after arriving, his death.
+    local ride = rideTo(w, lock, honest, stand.standId)
+    assert.is_true(honest.engine:submitArrival(ride.rideId, 1)); w:advance(30)
+    w:kill("Hon Est"); w:advance(2)
+    assert.is_truthy(obs.db.rideLogs["Bad Lock"][ride.rideId])
+    local d = obs.db.deaths["Bad Lock"][ride.rideId]
+    assert.are.same({true, "Hon Est"}, {d.heavy, d.victim})
+
+    -- Ten 5-star alts at 0.3, one 1-star at 1.0, one heavy death at 5.0:
+    -- (5 * 3.5 + 15 + 1 + 5) / (5 + 3 + 1 + 5) = 2.75.
+    local after = obs.engine:summary("Bad Lock", "trust")
+    local parts = {{1, C.RATING.W_TWO_SIDED}, {1, C.RATING.W_DEATH}}
+    for _ = 1, 10 do parts[#parts + 1] = {5, C.RATING.W_ONE_SIDED} end
+    assert.is_near(scoreOf(ns, parts), after.score, 1e-9)
+    assert.is_true(after.score < C.GUARD_LOW_TRUST)
+    assert.are.same({false, 1}, {after.isNew, after.deathsReported}) -- not New: 11 direct ratings and a death
+
+    -- So a fresh observer who asks Bad Lock for a ride is warned about trust, and
+    -- about nothing else.
+    local key = "Fre Sh#" .. stand.standId
+    assert.is_table(obs.engine:requestRide(stand.standId, 0)); w:advance(2)
+    assert.is_string(lock.engine:acceptRequest(key)); w:advance(2)
+    assert.is_true(w:acceptInvite("Fre Sh")); w:advance(2)
+    w:offerSummon("Bad Lock", "Fre Sh"); w:advance(1)
+    local verdict = last(obs, "GUARD_VERDICT")[2]
+    local trustCheck = check(verdict, "trust")
+    assert.are.same({false, "YELLOW"}, {trustCheck.ok, trustCheck.level})
+    assert.are.equal("YELLOW", verdict.level)
+    for _, id in ipairs{"summoner", "area", "position", "combat", "level", "changed"} do
+      assert.is_true(check(verdict, id).ok, id)
+    end
+  end)
+end)
+
+describe("invented relays", function()
+  local ns, w, obs, relayers, nobody, TS, ID
+  before_each(function()
+    ns = Taxi.load(); w = ns.World.new{seed = 32, start = 300000}
+    obs = w:addPlayer{name = "Fre Sh", class = "ROGUE", level = 44, place = "ironforge"}
+    nobody = w:addPlayer{name = "Nobody Real", class = "PRIEST", level = 40, place = "ironforge"}
+    relayers = {}
+    for i = 1, 3 do
+      relayers[i] = w:addPlayer{name = "Rel Ay" .. string.char(96 + i), class = "MAGE", level = 30, place = "ironforge"}
+    end
+    TS = math.floor(w.clock:now())
+    ID = ns.Ride.makeId("Bad Lock", "Nobody Real", TS)
+  end)
+  after_each(function() assert.are.same({}, w.errors) end)
+
+  -- Every relayer answers the observer's open query with the same invented
+  -- records, as a client that wants to be believed would.
+  local function relay(records)
+    assert.is_true(obs.engine:query("Bad Lock")); w:advance(1)
+    for _, r in ipairs(relayers) do
+      assert.is_string(r.engine:send("QUERY_R", {target = "Bad Lock", records = records}, "WHISPER", "Fre Sh"))
+    end
+    w:advance(3)
+  end
+
+  it("three relayers of an invented 5-star weigh 0.5; the real rater's own 1-star strikes each of them once and counts alone", function()
+    local C = ns.Config.RATING
+    relay({{kind = "trust", rater = "Nobody Real", stars = 5, id = ID, ts = TS}})
+    local list = trust(obs.db, "Bad Lock")
+    assert.are.equal(1, #list)
+    assert.are.same({["Rel Aya"] = true, ["Rel Ayb"] = true, ["Rel Ayc"] = true}, list[1].via)
+    local invented = obs.engine:summary("Bad Lock", "trust")
+    assert.are.same({5, true}, {invented.stars, invented.isNew}) -- second hand never clears "New"
+    assert.is_near(scoreOf(ns, {{5, C.W_RELAYED_CORROBORATED}}), invented.score, 1e-9)
+
+    -- The real rater says 1 star for that very ride and time.
+    assert.is_string(nobody.engine:send("RATING", {kind = "trust", target = "Bad Lock", stars = 1, id = ID, ts = TS}, "CHANNEL"))
+    w:advance(2)
+    for _, r in ipairs(relayers) do
+      assert.are.equal(1, obs.db.strikes[r.name], r.name)
+    end
+    list = trust(obs.db, "Bad Lock")
+    assert.are.equal(1, #list)
+    assert.are.same({"Nobody Real", 1}, {list[1].rater, list[1].stars})
+    assert.is_nil(list[1].via)
+    local real = obs.engine:summary("Bad Lock", "trust")
+    assert.are.same({1, 1}, {real.stars, real.count})
+    assert.is_near(scoreOf(ns, {{1, C.W_ONE_SIDED}}), real.score, 1e-9)
+  end)
+
+  it("an invented record the real rater's rating does not match is dropped without blaming the relayers", function()
+    relay({{kind = "trust", rater = "Nobody Real", stars = 5, id = ID, ts = TS}})
+    -- A rating of the same day under another id: not the same record, so nobody
+    -- altered anything, but it replaces the rater's second-hand rating.
+    assert.is_string(nobody.engine:send("RATING", {kind = "trust", target = "Bad Lock", stars = 1,
+      id = ns.Ride.makeId("Bad Lock", "Nobody Real", TS + 60), ts = TS + 60}, "CHANNEL"))
+    w:advance(2)
+    assert.are.same({}, obs.db.strikes)
+    local list = trust(obs.db, "Bad Lock")
+    assert.are.equal(1, #list)
+    assert.are.equal(1, list[1].stars)
+    assert.is_nil(list[1].via)
+  end)
+
+  it("a flood of invented relays buys at most RELAY_CAP_TOTAL of weight and never clears New", function()
+    local C = ns.Config.RATING
+    for i = 1, 3 do
+      relayers[#relayers + 1] = w:addPlayer{name = "Rel Ayx" .. string.char(96 + i), class = "MAGE", level = 30, place = "ironforge"}
+    end
+    local records = {}
+    for i = 1, 10 do
+      local rater = "Fak Rat" .. string.char(96 + i)
+      records[i] = {kind = "trust", rater = rater, stars = 5, id = ns.Ride.makeId("Bad Lock", rater, TS), ts = TS}
+    end
+    relay(records)
+    assert.are.equal(10, #trust(obs.db, "Bad Lock"))
+    local flood = obs.engine:summary("Bad Lock", "trust")
+    assert.is_true(flood.isNew)
+    -- Six relayers back ten records at 0.5 each: scaled to 0.5 per relayer, then
+    -- to 2.0 in all.
+    assert.is_near(scoreOf(ns, {{5, C.RELAY_CAP_TOTAL}}), flood.score, 1e-9)
+  end)
+end)
+
+describe("warlock that skips RIDE_LOG", function()
+  local ns, w, lock, t, by, stand
+  before_each(function()
+    ns = Taxi.load(); w = ns.World.new{seed = 33, start = 400000}
+    lock = w:addPlayer{name = "Dar Kbolt", class = "WARLOCK", level = 45, place = "gadgetzan"}
+    t = w:addPlayer{name = "Tra Veler", class = "HUNTER", level = 44, place = "ironforge", money = 50000}
+    by = w:addPlayer{name = "Bys Tander", class = "ROGUE", level = 44, place = "ironforge"}
+    stand = lock.engine:openStand{kind = "lock"}; w:advance(2)
+  end)
+  after_each(function() assert.are.same({}, w.errors) end)
+
+  local function rateOnce()
+    local ride = rideTo(w, lock, t, stand.standId)
+    assert.is_true(t.engine:submitArrival(ride.rideId, 1)); w:advance(2)
+    return ride
+  end
+
+  it("with the RIDE_LOG the traveler's rating is two-sided (control)", function()
+    local ride = rateOnce()
+    assert.is_truthy(by.db.rideLogs["Dar Kbolt"][ride.rideId])
+    local s = by.engine:summary("Dar Kbolt", "trust")
+    assert.are.equal(1, s.stars)
+    assert.is_near(scoreOf(ns, {{1, ns.Config.RATING.W_TWO_SIDED}}), s.score, 1e-9)
+  end)
+
+  it("without it the same rating counts one-sided (0.3), for everyone who heard it", function()
+    local send = lock.engine.send
+    lock.engine.send = function(e, msgType, ...)
+      if msgType == "RIDE_LOG" then return nil, "skipped" end
+      return send(e, msgType, ...)
+    end
+    local ride = rateOnce()
+    for _, p in ipairs{by, t} do
+      assert.is_nil(p.db.rideLogs["Dar Kbolt"], p.name)
+      local s = p.engine:summary("Dar Kbolt", "trust")
+      assert.are.equal(1, s.stars, p.name)
+      assert.is_near(scoreOf(ns, {{1, ns.Config.RATING.W_ONE_SIDED}}), s.score, 1e-9, p.name)
+    end
+    assert.is_truthy(by.db.receipts["Dar Kbolt"][ride.rideId]) -- the ride is still known: the traveler said ARRIVED
+  end)
+end)
+
+describe("death within the window", function()
+  local ns, w, lock, c1, by, t, stand, ride
+  before_each(function()
+    ns = Taxi.load(); w = ns.World.new{seed = 34, start = 450000}
+    lock = w:addPlayer{name = "Dar Kbolt", class = "WARLOCK", level = 45, place = "gadgetzan"}
+    c1 = w:addPlayer{name = "Cee One", class = "PRIEST", level = 40, place = "gadgetzan"}
+    by = w:addPlayer{name = "Bys Tander", class = "ROGUE", level = 44, place = "ironforge"}
+    t = w:addPlayer{name = "Tra Veler", class = "HUNTER", level = 44, place = "ironforge", money = 50000}
+    stand = lock.engine:openStand{kind = "lock"}; w:advance(2)
+    ride = rideTo(w, lock, t, stand.standId)
+  end)
+  after_each(function() assert.are.same({}, w.errors) end)
+
+  local function heavy(p)
+    local d = p.db.deaths["Dar Kbolt"] and p.db.deaths["Dar Kbolt"][ride.rideId]
+    return d ~= nil and d.heavy == true
+  end
+
+  for _, secs in ipairs{30, 119} do
+    it("a kill " .. secs .. " s after arrival is a heavy death on every player who heard RIDE_START", function()
+      w:advance(secs - 1)
+      local late = w:addPlayer{name = "Lat Ecomer", class = "ROGUE", level = 44, place = "ironforge"} -- missed the start
+      w:advance(1)
+      w:kill("Tra Veler"); w:advance(2)
+      for _, p in ipairs{lock, c1, by, t} do
+        assert.is_true(heavy(p), p.name)
+        local s = p.engine:summary("Dar Kbolt", "trust")
+        assert.are.equal(1, s.deathsReported, p.name)
+        assert.is_near(scoreOf(ns, {{1, ns.Config.RATING.W_DEATH}}), s.score, 1e-9, p.name)
+      end
+      -- Someone who never heard the victim start the ride has nothing to tie his
+      -- death to: he records none, whatever the victim's own report says.
+      assert.is_false(heavy(late))
+      assert.are.same({}, late.db.deaths)
+      -- The dead victim sends nothing more, so nobody takes him for a liar and
+      -- the death stays on file.
+      w:advance(ns.Config.ALIVE_GRACE + 60)
+      for _, p in ipairs{lock, c1, by, t} do
+        assert.is_true(heavy(p), p.name)
+        assert.are.same({}, p.db.liars, p.name)
+      end
+    end)
+  end
+
+  for _, secs in ipairs{121, 150} do
+    it("a kill " .. secs .. " s after arrival records nothing", function()
+      w:advance(secs)
+      w:kill("Tra Veler"); w:advance(2)
+      for _, p in ipairs{lock, c1, by, t} do
+        assert.are.same({}, p.db.deaths, p.name)
+        assert.are.equal(0, p.engine:summary("Dar Kbolt", "trust").deathsReported, p.name)
+      end
+    end)
+  end
+
+  it("one death is one heavy death: a traveler with two rides open counts against one warlock only, the latest arrival's (R32)", function()
+    w:advance(10)
+    local other = ns.Ride.makeId("Eve Lock", "Tra Veler", math.floor(w.clock:now()))
+    assert.is_string(t.engine:send("RIDE_START", {rideId = other, warlock = "Eve Lock"}, "CHANNEL")); w:advance(1)
+    assert.is_string(t.engine:send("ARRIVED", {rideId = other, warlock = "Eve Lock"}, "CHANNEL")); w:advance(10)
+    w:kill("Tra Veler"); w:advance(2)
+    for _, p in ipairs{lock, c1, by} do
+      assert.is_true(p.db.deaths["Eve Lock"][other].heavy, p.name)
+      assert.is_nil(p.db.deaths["Dar Kbolt"], p.name) -- his own death report for that ride is refused: one heavy death each
+    end
+  end)
+end)
+
+describe("fake death claim", function()
+  local ns, w, lock, fake, bo, cy, stand, id
+  before_each(function()
+    ns = Taxi.load(); w = ns.World.new{seed = 35, start = 500000}
+    lock = w:addPlayer{name = "Dar Kbolt", class = "WARLOCK", level = 45, place = "gadgetzan"}
+    fake = w:addPlayer{name = "Fak Er", class = "ROGUE", level = 44, place = "ironforge"}
+    bo = w:addPlayer{name = "Bo Lee", class = "MAGE", level = 30, place = "ironforge"}
+    cy = w:addPlayer{name = "Cy New", class = "PRIEST", level = 30, place = "ironforge"}
+    stand = lock.engine:openStand{kind = "lock"}; w:advance(2)
+    id = ns.Ride.makeId("Dar Kbolt", "Fak Er", math.floor(w.clock:now()))
+  end)
+  after_each(function() assert.are.same({}, w.errors) end)
+
+  it("a living player who reports his own death is a liar on every observer once he is heard again", function()
+    -- R7: RIDE_START, then DEATH{self}, then (after ALIVE_GRACE) a message that is not a DEATH.
+    assert.is_string(fake.engine:send("RIDE_START", {rideId = id, warlock = "Dar Kbolt"}, "CHANNEL")); w:advance(2)
+    assert.is_string(fake.engine:send("DEATH", {rideId = id, victim = "Fak Er", warlock = "Dar Kbolt", secs = 10,
+      source = "self"}, "CHANNEL")); w:advance(2)
+    for _, p in ipairs{lock, bo, cy} do
+      assert.is_true(p.db.deaths["Dar Kbolt"][id].heavy, p.name) -- believed for now
+      assert.are.equal(1, p.engine:summary("Dar Kbolt", "trust").deathsReported, p.name)
+    end
+
+    w:advance(ns.Config.ALIVE_GRACE + 1)
+    -- His REQUEST is whispered to the warlock alone, so only the warlock hears he is alive.
+    assert.is_table(fake.engine:requestRide(stand.standId, 0)); w:advance(2)
+    assert.is_number(lock.db.liars["Fak Er"])
+    assert.is_nil(lock.db.deaths["Dar Kbolt"])
+    assert.is_nil(bo.db.liars["Fak Er"])
+    assert.is_truthy(bo.db.deaths["Dar Kbolt"][id])
+    -- Asking the channel about the warlock he rode with reaches everyone.
+    assert.is_true(fake.engine:query("Dar Kbolt")); w:advance(2)
+    for _, p in ipairs{lock, bo, cy} do
+      assert.is_number(p.db.liars["Fak Er"], p.name)
+      assert.is_nil(p.db.deaths["Dar Kbolt"], p.name)
+      assert.are.equal(0, p.engine:summary("Dar Kbolt", "trust").deathsReported, p.name)
+      assert.are.same({}, p.db.strikes, p.name)
+    end
+  end)
+
+end)
+
+describe("stingy warlock", function()
+  local ns, w, lock, c1, c2, t, stand
+  before_each(function()
+    ns = Taxi.load(); w = ns.World.new{seed = 36, start = 600000}
+    lock = w:addPlayer{name = "Dar Kbolt", class = "WARLOCK", level = 45, place = "gadgetzan", money = 10000}
+    c1 = w:addPlayer{name = "Cee One", class = "PRIEST", level = 40, place = "gadgetzan"}
+    c2 = w:addPlayer{name = "Cee Two", class = "ROGUE", level = 40, place = "gadgetzan"}
+    t = w:addPlayer{name = "Tra Veler", class = "HUNTER", level = 44, place = "ironforge", money = 50000}
+    stand = lock.engine:openStand{kind = "lock", clickerPct = 25}
+    assert.is_true(c1.engine:applyClicker(stand.standId, 25)); w:advance(2)
+    assert.is_true(lock.engine:respondClicker("Cee One", "ACCEPT")); w:advance(2)
+    assert.is_true(w:acceptInvite("Cee One")); w:advance(1)
+  end)
+  after_each(function() assert.are.same({}, w.errors) end)
+
+  it("a warlock who pays his clicker nothing earns a 1-star Share rating that third parties see", function()
+    local ride = rideTo(w, lock, t, stand.standId); w:advance(2) -- the warlock hears ARRIVED before the trade
+    assert.is_true(t.engine:submitArrival(ride.rideId, 5, 10000))
+    assert.is_true(w:trade("Tra Veler", "Dar Kbolt", 10000)); w:advance(2)
+
+    local ended = c1.engine:leaveStand()
+    assert.are.same({2500, 0, 1}, {ended.owed, ended.received, ended.prefill}) -- nothing paid: prefilled 1 star
+    assert.is_true(c1.engine:submitShiftRating(ended.shiftId, ended.prefill)); w:advance(2)
+
+    local share = c2.engine:summary("Dar Kbolt", "share")
+    assert.are.same({1, 1}, {share.stars, share.count})
+    local rec = c2.db.ratings["Dar Kbolt"].share[1]
+    assert.are.same({"Cee One", 2500, 0, 25}, {rec.rater, rec.owed, rec.received, rec.pct})
+  end)
+end)
