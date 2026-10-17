@@ -11,3 +11,6 @@ Domain\Util.lua
 Domain\Names.lua
 Domain\Money.lua
 Comms\Protocol.lua
+Comms\Transport.lua
+Sim\Clock.lua
+Sim\Bus.lua
