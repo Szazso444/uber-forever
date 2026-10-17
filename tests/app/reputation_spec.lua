@@ -365,18 +365,41 @@ describe("Reputation sync", function()
       assert.is_nil(b.engine.db.deaths["Dar Kbolt"])
     end)
 
-    it("my own death sends DEATH{source=\"self\"}, drops my queue and silences me (R37)", function()
-      local v = add("Vic Tim")
-      -- What the traveler side does for its own ride (its channel messages never come back to it).
+    -- Vic announces his ride and arrives, recording both in his own witness the
+    -- way the traveler side does (his channel messages never come back to him).
+    local function onOwnRide(v)
       v.engine.witness:rideStarted(id, "Vic Tim", "Dar Kbolt", now(), "Vic Tim")
       v.engine:send("RIDE_START", {rideId = id, warlock = "Dar Kbolt"}, "CHANNEL")
       w:advance(2)
       v.engine.witness:arrived(id, "Vic Tim", now(), "Vic Tim")
       v.engine:send("ARRIVED", {rideId = id, warlock = "Dar Kbolt"}, "CHANNEL")
       w:advance(2)
+    end
+
+    it("my death off Hardcore sends no DEATH, keeps my queue and lets me go on sending (R35)", function()
+      local v = add("Vic Tim", {hardcore = false})
+      onOwnRide(v)
       local before = #wire("Vic Tim")
       for i = 1, 5 do v.engine:send("QUERY", {target = "Que Ry" .. i}, "CHANNEL") end
       w:kill("Vic Tim")
+      assert.is_true(v.game:isDead())
+      assert.are.equal(5, v.engine.transport:queued())
+      assert.is_string(v.engine:send("QUERY", {target = "Aft Er"}, "CHANNEL"))
+      w:advance(10)
+      local after = wire("Vic Tim")
+      assert.are.equal(before + 6, #after)
+      assert.are.same({}, ofType(after, "DEATH"))
+      assert.are.same({}, v.engine.db.deaths)
+      assert.is_true(v.engine:query("Dar Kbolt"))
+    end)
+
+    it("my own death on Hardcore sends DEATH{source=\"self\"}, drops my queue and silences me (R37)", function()
+      local v = add("Vic Tim")
+      onOwnRide(v)
+      local before = #wire("Vic Tim")
+      for i = 1, 5 do v.engine:send("QUERY", {target = "Que Ry" .. i}, "CHANNEL") end
+      w:kill("Vic Tim")
+      assert.are.equal(1, v.engine.transport:queued()) -- the DEATH report alone
       w:advance(5)
       local after = wire("Vic Tim")
       assert.are.equal(before + 1, #after)

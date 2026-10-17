@@ -315,29 +315,35 @@ function Engine:closeStand()
   return true
 end
 
--- The board (R18) -------------------------------------------------------------------
+-- The board (R18, R41) --------------------------------------------------------------
 
--- True while a board entry still holds its id: heard within STAND_TTL.
-local function live(view, now)
-  return now - view.seenAt <= Config.STAND_TTL
+-- Stand ids are owner@seconds, so an id names its owner: a STAND or STAND_END
+-- counts only when its id starts with the sender's own (tidied) name and "@".
+-- No one can then write to another player's stand id, and an entry on the
+-- board can only ever be its owner's (R18 holds by construction; names never
+-- contain "@").
+local function ownsId(standId, sender)
+  local name = Names.normalize(sender)
+  if name == nil or name == "" or type(standId) ~= "string" then
+    return false
+  end
+  local prefix = name .. "@"
+  return standId:sub(1, #prefix) == prefix
 end
 
--- A stand heartbeat. The owner is the sender the server stamped. A live entry
--- under the same id belongs to its owner, so another sender cannot take it over.
+-- A stand heartbeat. The owner is the sender the server stamped.
 Engine.handlers.STAND = function(e, msg, sender)
-  local now = e.clock:now()
-  local old = Board.get(e.board, msg.standId)
-  if old ~= nil and live(old, now) and not Names.same(old.owner, sender) then
+  if not ownsId(msg.standId, sender) then
     return
   end
+  local now = e.clock:now()
   Board.upsert(e.board, Stand.fromFields(msg, sender, now), now)
   e:emit("BOARD_CHANGED")
 end
 
 -- Only a stand's owner can end it.
 Engine.handlers.STAND_END = function(e, msg, sender)
-  local old = Board.get(e.board, msg.standId)
-  if old ~= nil and Names.same(old.owner, sender) then
+  if ownsId(msg.standId, sender) and Board.get(e.board, msg.standId) ~= nil then
     Board.remove(e.board, msg.standId)
     e:emit("BOARD_CHANGED")
   end

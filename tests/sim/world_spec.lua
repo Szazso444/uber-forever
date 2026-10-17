@@ -217,15 +217,64 @@ describe("World", function()
       assert.is_false(a.game:unitInCombat("party1"))
     end)
 
-    it("kill sends PLAYER_DIED to the victim and HC_DEATH to every other Hardcore player", function()
+    it("kill sends PLAYER_DIED to the victim, then HC_DEATH to every player, the victim included", function()
       local seen = listen("PLAYER_DIED", "HC_DEATH", "MEMBER_DIED")
       local a = add("Ana Smith")
       add("Bo Lee"); add("Cy Soft", {hardcore = false})
       a.game:invite("Bo Lee"); w:acceptInvite("Bo Lee")
       w:kill("Ana Smith")
-      assert.are.same({{"Ana Smith", "PLAYER_DIED"}, {"Bo Lee", "HC_DEATH", "Ana Smith"}}, seen)
+      assert.are.same({
+        {"Ana Smith", "PLAYER_DIED"},
+        {"Ana Smith", "HC_DEATH", "Ana Smith"},
+        {"Bo Lee", "HC_DEATH", "Ana Smith"},
+        {"Cy Soft", "HC_DEATH", "Ana Smith"},
+      }, seen) -- never MEMBER_DIED (R36); each engine decides what HC_DEATH means to it
       assert.is_true(a.game:isDead())
       assert.is_true(w:player("Bo Lee").game:unitDead("party1"))
+    end)
+
+    describe("the victim's own DEATH report (D6)", function()
+      -- Vic heard his own ride start and arrive, as the traveler side records it.
+      local function onRide()
+        local v = add("Vic Tim")
+        add("Bo Lee")
+        local id = ns.Ride.makeId("Dar Kbolt", "Vic Tim", w.clock:now())
+        v.engine.witness:rideStarted(id, "Vic Tim", "Dar Kbolt", w.clock:now(), "Vic Tim")
+        w:advance(5)
+        v.engine.witness:arrived(id, "Vic Tim", w.clock:now(), "Vic Tim")
+        w:advance(5)
+        return v, id
+      end
+
+      -- The DEATH messages Vic put on the bus.
+      local function deathsSent()
+        local out = {}
+        for _, sent in ipairs(w.bus:sent()) do
+          local msg = sent.sender == "Vic Tim" and ns.Protocol.decode(sent.text:match("^[^:]+:1/1:(.*)$") or "")
+          if msg and msg.type == "DEATH" then out[#out + 1] = msg end
+        end
+        return out
+      end
+
+      it("goes out when kill brings PLAYER_DIED and then his own HC_DEATH", function()
+        local _, id = onRide()
+        w:kill("Vic Tim")
+        w:advance(2)
+        local sent = deathsSent()
+        assert.are.equal(1, #sent)
+        assert.are.same({id, "Vic Tim", "Dar Kbolt", "self"}, {sent[1].rideId, sent[1].victim, sent[1].warlock, sent[1].source})
+      end)
+
+      it("still goes out when his own HC_DEATH arrives before PLAYER_DIED", function()
+        local v, id = onRide()
+        v.dead = true
+        w:fire(v, "HC_DEATH", "Vic Tim")
+        w:fire(v, "PLAYER_DIED")
+        w:advance(2)
+        local sent = deathsSent()
+        assert.are.equal(1, #sent)
+        assert.are.same({id, "self"}, {sent[1].rideId, sent[1].source})
+      end)
     end)
   end)
 
@@ -363,6 +412,25 @@ describe("World", function()
       w:removePlayer("Ana Smith")
       local kept = add("Ana Smith", {db = a.db})
       assert.is_true(kept.db.settings.marker)
+    end)
+
+    it("removePlayer takes a grouped player out of the group; the others hear GROUP_CHANGED", function()
+      local seen = listen("GROUP_CHANGED")
+      local a = add("Ana Smith")
+      add("Bo Lee"); add("Cy Dane")
+      a.game:invite("Bo Lee"); w:acceptInvite("Bo Lee")
+      a.game:invite("Cy Dane"); w:acceptInvite("Cy Dane")
+      for i = #seen, 1, -1 do seen[i] = nil end
+      assert.has_no.errors(function() w:removePlayer("Cy Dane") end)
+      assert.is_nil(w.players["Cy Dane"])
+      assert.is_nil(w.bus.players["Cy Dane"])
+      assert.are.same({{"Ana Smith", "GROUP_CHANGED"}, {"Bo Lee", "GROUP_CHANGED"}}, seen)
+      assert.are.same({"Ana Smith", "Bo Lee"}, a.game:groupNames())
+      assert.is_nil(a.game:unitFor("Cy Dane"))
+      -- The last two: removing one breaks the group up.
+      w:removePlayer("Bo Lee")
+      assert.are.same({}, a.game:groupNames())
+      assert.is_nil(w.bus.players["Ana Smith"].group)
     end)
 
     it("a removed player's engine stops sending", function()

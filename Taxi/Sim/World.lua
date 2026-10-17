@@ -153,14 +153,14 @@ function World:addPlayer(o)
   return p
 end
 
--- The player logs out: off the bus, out of their group, engine stopped. A
--- player added later under the same name is a new one, with a fresh db unless
--- one is passed.
+-- The player logs out: engine stopped, out of their group (the others hear
+-- GROUP_CHANGED), off the bus. A player added later under the same name is a
+-- new one, with a fresh db unless one is passed.
 function World:removePlayer(name)
   local p = self:player(name)
   p.engine:stop()
+  self:leaveGroup(p, false) -- while still on the bus, which leaving updates
   self.bus:detach(name)
-  self:leaveGroup(p, false)
   self.players[name] = nil
   for i, q in ipairs(self.order) do
     if q == p then
@@ -286,18 +286,16 @@ function World:setCombat(name, inCombat)
   end
 end
 
--- The player dies: PLAYER_DIED for them, then, on Hardcore, the server's death
--- notice (HC_DEATH) for every other Hardcore player.
+-- The player dies: PLAYER_DIED for them, then the server's death notice
+-- (HC_DEATH) for every player, the victim and non-Hardcore players included.
+-- Each engine decides what the notice means to it (a non-Hardcore engine and
+-- the victim's own engine ignore it). There is no MEMBER_DIED (R36).
 function World:kill(name)
   local victim = self:player(name)
   victim.dead = true
   self:fire(victim, "PLAYER_DIED")
-  if victim.hardcore then
-    for _, p in ipairs(self.order) do
-      if p ~= victim and p.hardcore then
-        self:fire(p, "HC_DEATH", victim.name)
-      end
-    end
+  for _, p in ipairs(self.order) do
+    self:fire(p, "HC_DEATH", victim.name)
   end
 end
 
