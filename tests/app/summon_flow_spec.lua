@@ -337,6 +337,24 @@ describe("Driver", function()
     assert.are.equal("Tre Two", lock.engine:nextTraveler())
   end)
 
+  it("files a TIP only from the ride's traveler, and counts an early one once the ride arrives (R39)", function()
+    add("Cee One", {place = "gadgetzan"})
+    local s = lock.engine:openStand{kind = "lock"}; w:advance(1)
+    lock.game:invite("Cee One"); assert.is_true(w:acceptInvite("Cee One"))
+    assert.is_true(lock.engine:addOwnCrew("Cee One", 25))
+    local mine = grouped(t, s)
+    local function hear(sender, msgType, fields, dist)
+      lock.engine:handle(assert(ns.Protocol.decode(ns.Protocol.encode(msgType, "t1", fields))), sender, dist)
+    end
+    hear("Cee One", "TIP", {rideId = mine.rideId, amount = 999}, "PARTY")         -- not the ride's traveler
+    hear("Tra Veler", "TIP", {rideId = "Dar Kbolt@Tra Veler@1", amount = 999}, "PARTY") -- not a ride of mine
+    hear("Tra Veler", "TIP", {rideId = mine.rideId, amount = 10000}, "PARTY")     -- before the ARRIVED
+    hear("Tra Veler", "ARRIVED", {rideId = mine.rideId, warlock = "Dar Kbolt"}, "CHANNEL")
+    assert.are.equal("arrived", mine.state)
+    w:trade("Tra Veler", "Dar Kbolt", 10000); w:advance(1)
+    assert.are.same({{clicker = "Cee One", owed = 2500, received = 0}}, lock.engine:payoutList())
+  end)
+
   it("keeps the stand's combat and soul shard flags, and its status with them", function()
     add("Cee One", {place = "gadgetzan"}); add("Cee Two", {place = "gadgetzan"})
     local s = lock.engine:openStand{kind = "lock"}
@@ -409,6 +427,22 @@ describe("Traveler", function()
     assert.are.same({s.standId, 0, 44, "WHISPER", "Dar Kbolt"}, {sent[1].standId, sent[1].offer, sent[1].level, sent[1].dist, sent[1].to})
   end)
 
+  it("takes ACCEPT and DECLINE only from its driver, and an ACCEPT only with a ride id naming us both", function()
+    local s = lock.engine:openStand{kind = "lock"}; w:advance(1)
+    local ride = t.engine:requestRide(s.standId, 0)
+    local function hear(sender, msgType, fields)
+      t.engine:handle(assert(ns.Protocol.decode(ns.Protocol.encode(msgType, "t1", fields))), sender, "WHISPER")
+    end
+    hear("Mal Ory", "ACCEPT", {rideId = "Mal Ory@Tra Veler@30001", standId = s.standId})
+    hear("Mal Ory", "DECLINE", {standId = s.standId})
+    hear("Dar Kbolt", "ACCEPT", {rideId = "Dar Kbolt@Oth Er@30001", standId = s.standId})
+    hear("Dar Kbolt", "ACCEPT", {rideId = "free-form", standId = s.standId})
+    assert.are.equal("requested", ride.state)
+    hear("Dar Kbolt", "ACCEPT", {rideId = "Dar Kbolt@Tra Veler@30001", standId = s.standId})
+    assert.are.equal("accepted", ride.state)
+    assert.are.equal("Dar Kbolt@Tra Veler@30001", ride.rideId)
+  end)
+
   it("a dead Hardcore traveler can't request a ride (R35, R37)", function()
     local s = lock.engine:openStand{kind = "lock"}; w:advance(1)
     w:kill("Tra Veler")
@@ -474,6 +508,31 @@ describe("Traveler", function()
     v = last(t, "GUARD_VERDICT")[2]
     assert.are.equal("RED", v.level)
     assert.are.equal("In combat: Nea Rby", check(v, "combat").text)
+  end)
+
+  it("counts a member the game can't place or can't tell the combat of as fighting at the stand (R21)", function()
+    grouped()
+    add("Far Away") -- in Ironforge, fighting
+    lock.game:invite("Far Away"); assert.is_true(w:acceptInvite("Far Away"))
+    w:setCombat("Far Away", true)
+    local unitPos = t.game.unitPos
+    t.game.unitPos = function(g, unit)
+      if unit == g:unitFor("Far Away") then return nil end
+      return unitPos(g, unit)
+    end
+    w:offerSummon("Dar Kbolt", "Tra Veler"); w:advance(1)
+    assert.are.equal("In combat: Far Away", check(last(t, "GUARD_VERDICT")[2], "combat").text)
+    t.game.unitPos = unitPos
+    w:setCombat("Far Away", false)
+    local unitInCombat = t.game.unitInCombat
+    t.game.unitInCombat = function(g, unit)
+      if unit == g:unitFor("Dar Kbolt") then return nil end
+      return unitInCombat(g, unit)
+    end
+    w:offerSummon("Dar Kbolt", "Tra Veler"); w:advance(1)
+    local v = last(t, "GUARD_VERDICT")[2]
+    assert.are.equal("RED", v.level)
+    assert.are.equal("In combat: Dar Kbolt", check(v, "combat").text)
   end)
 
   it("a declined summon waits for another once, then the ride is cancelled", function()
