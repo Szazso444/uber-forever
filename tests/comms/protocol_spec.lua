@@ -77,6 +77,16 @@ describe("Protocol", function()
       assert.are.equal(ns.Config.PROTOCOL, P.VERSION)
     end)
 
+    it("takes the version from Config instead of a literal", function()
+      local fakeNs = { Config = { PROTOCOL = 7 } }
+      assert(loadfile("Taxi/Comms/Protocol.lua"))("Taxi", fakeNs)
+      local other = fakeNs.Protocol
+      assert.are.equal(7, other.VERSION)
+      assert.are.equal("7^QUERY^q^t", other.encode("QUERY", "q", { target = "t" }))
+      assert.is_table(other.decode("7^QUERY^q^t"))
+      assert.are.same({ nil, "version", 1 }, { other.decode("1^QUERY^q^t") })
+    end)
+
     it("RECORD lists the record fields in wire order", function()
       assert.are.same({ "kind", "rater", "stars", "id", "ts", "owed", "received", "pct", "other" }, P.RECORD)
     end)
