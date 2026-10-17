@@ -28,15 +28,15 @@ local M = {
   GUARD_LOW_TRUST = 3.0, -- warn when the warlock's score is below this
 
   -- Deaths
-  DEATH_WINDOW = 120, -- seconds after a ride starts in which a death counts
-  ALIVE_GRACE = 60,
+  DEATH_WINDOW = 120, -- seconds after arrival in which a death counts against the warlock
+  ALIVE_GRACE = 60, -- a victim seen alive this long after a reported death is lying
 
   -- Rating sync
   QUERY_COOLDOWN = 600, -- seconds between queries to the same warlock
   QUERY_MAX_REPLIES = 20,
   QUERY_JITTER = 5, -- replies are delayed by 0..QUERY_JITTER seconds
   QUERY_MAX_RECORDS = 50, -- records per reply
-  RIDE_MEMORY = 1800, -- seconds a finished ride is remembered
+  RIDE_MEMORY = 1800, -- seconds Witness remembers a ride before dropping it
 
   -- Rating maths
   RATING = {
