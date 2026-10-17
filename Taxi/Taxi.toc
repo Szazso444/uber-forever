@@ -10,6 +10,7 @@ Core\Callbacks.lua
 Domain\Util.lua
 Domain\Names.lua
 Domain\Money.lua
+Domain\Store.lua
 Comms\Protocol.lua
 Comms\Transport.lua
 Sim\Clock.lua
