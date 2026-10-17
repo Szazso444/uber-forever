@@ -2,7 +2,7 @@
 
 - **Name:** "Taxi" is a placeholder. Every name lives in `Core/Config.lua`: addon title, message prefix, channel name and slash command. The SavedVariables names (`TaxiDB`, `TaxiCharDB`) must be final before the first public release, because renaming them later loses everyone's stored ratings unless the data is migrated.
 - **Date:** 2026-10-17 (revised the same day after review)
-- **Status:** Draft, awaiting final review
+- **Status:** Approved 2026-10-17
 - **Target:** World of Warcraft: Forever, client 1.60.1, Hardcore ruleset. The addon also runs on the other rulesets, which is useful for testing before Hardcore launches.
 
 Sections marked **[Proposed]** were decided by Claude while writing this spec and have not been discussed yet. Everything else was agreed during brainstorming and review.
@@ -208,18 +208,23 @@ A shift ends when the clicker leaves the stand or the stand closes. The clicker 
 
 ### 8.2 Rules
 
-1. **Speak for yourself only.** A rating is accepted only straight from the player who gave it (sender = rater). Ratings passed along by someone else are ignored. Nobody can change or invent another player's rating.
+1. **Direct beats relayed.** A rating counts fully only when it comes straight from the player who gave it (sender = rater). So nobody can change another player's rating and pass it off as theirs.
+   - Addons also **relay** ratings they heard directly, so history survives when raters quit. Relays go **one hop only**: a relayed rating is never relayed again. Each relayed rating carries the original rater and the relayer's name, which the server stamps.
+   - Relayed ratings count at **reduced weight** (§8.2 rule 5).
+   - When the original rater later sends the same rating directly, it is upgraded to direct.
+   - If the rater's own message contradicts a relay (different stars for the same `rideId`, or "I never rated that"), the relay is dropped and the relayer gets a **strike**. After 3 strikes [Proposed], all of that relayer's relays are ignored.
 2. **Rides need two-sided proof.** A Trust rating counts fully only if both parties logged the ride with the same `rideId`: the traveler's `RATING` and the warlock's `RIDE_LOG`. If only the traveler logged it, the rating counts at reduced weight. This also covers a modified warlock addon that skips logging bad rides.
 3. **A death right after arrival becomes an automatic 1★.** A traveler who dies can't fill in the arrival window, so the addon records the rating for them.
    - When a traveler joins the warlock's group, their addon broadcasts `RIDE_START(rideId, warlock)`, which ties the traveler to that warlock publicly.
    - If the traveler dies within **2 minutes** of arriving, their own addon sends `DEATH(rideId)`. It does this whether or not they are still in the group.
    - Any addon that heard the `RIDE_START` and receives `HARDCORE_DEATHS` for that traveler in the same window records the death too. So do group members' addons, if the traveler is still in the group and they see `UnitIsDeadOrGhost` change.
    - The death is recorded as a **1★ Trust rating with heavy weight** [Proposed: weight 5]. It counts even if the warlock never logged the ride.
+   - A **relayed** death report doesn't get the heavy weight, because a relayer could invent it. It counts as an ordinary relayed 1★ and is also shown on the stand as a warning: "⚠ 1 reported death (relayed)".
    - Dying costs a Hardcore character, so nobody fakes a death cheaply. A player who reported their own death but keeps broadcasting as alive on Hardcore afterwards has all of their reports discarded.
 4. **The Share rating checks itself.** The owed share comes from the travelers' own `TIP` reports, each clicker's agreed percentage and the gold received in the clicker's own bags (§7.2), not from the warlock's word.
 5. **Weighting and display:**
    - Visible: average stars to one decimal, plus a count of verified summons or shifts. Fewer than 5 ratings shows "New".
-   - Background score [Proposed]: a weighted average with a prior, so one alt's 5★ can't make a new warlock 5.0: `score = (C·m + Σ wᵢ·starsᵢ) / (C + Σ wᵢ)` with `m = 3.5` and `C = 5`. Weights: two-sided 1.0, one-sided 0.3, death 5.0. All numbers live in `Core/Config.lua` and can be tuned later.
+   - Background score [Proposed]: a weighted average with a prior, so one alt's 5★ can't make a new warlock 5.0: `score = (C·m + Σ wᵢ·starsᵢ) / (C + Σ wᵢ)` with `m = 3.5` and `C = 5`. Weights: two-sided 1.0, one-sided 0.3, death 5.0, relayed 0.2. A relayed rating reported by 3 or more different relayers counts 0.5. All numbers live in `Core/Config.lua` and can be tuned later.
    - Each rater has one rating per warlock per day, and only the latest 500 ratings per warlock are kept (like Uber).
    - Guild members are highlighted and listed first.
 6. **Local edits only fool yourself.** Editing your own SavedVariables changes only your own view.
@@ -227,25 +232,33 @@ A shift ends when the clicker leaves the stand or the stand closes. The clicker 
 ### 8.3 Sync [Proposed]
 
 - New ratings are broadcast live on the channel. Every addon that hears one directly from the rater stores it.
-- When you open a stand or a marketplace entry, your addon sends `QUERY(warlock)` at most once per 10 minutes per warlock. Online raters reply with **their own** ratings of that warlock by whisper, after a random 0–5 s delay, with at most 20 replies. The warlock's addon replies with its ride and shift logs.
-- **Limit:** ratings from raters who are offline and whom you've never heard from are not available to you. Coverage grows as people play. This is the cost of rule 1, which is what prevents relayed fakes.
+- When you open a stand or a marketplace entry, your addon sends `QUERY(warlock)` at most once per 10 minutes per warlock. The warlock's addon replies with its ride and shift logs. Other addons reply by whisper, after a random 0–5 s delay, with at most 20 replies:
+  - each sends **its own** ratings of that warlock (received as direct);
+  - and the ratings it **heard directly** from others (received as relayed, one hop).
+- Each reply carries at most the 50 most recent records [Proposed], so a well-known warlock's full history fills in over several queries.
 
 ### 8.4 Persistence
 
 Scores stay with the addon through three layers:
 
-1. **Your own disk.** Everything your addon has heard directly is stored in `TaxiDB` (account-wide SavedVariables) at `WTF\Account\<account>\SavedVariables\Taxi.lua`.
+1. **Your own disk.** Everything your addon has heard, direct and relayed, is stored in `TaxiDB` (account-wide SavedVariables) at `WTF\Account\<account>\SavedVariables\Taxi.lua`.
    - The game loads it at login and writes it on logout and `/reload`. It survives restarts, patches and addon updates.
    - Ratings don't expire. Only the 500-per-warlock cap applies.
 2. **Ratings you gave are kept permanently** in a separate `given` list, outside that cap, so your addon can always re-answer queries with them (§8.3).
-3. **Other players.** Every addon holds copies of what it has heard, so a lost local file refills over time through queries.
+3. **Other players.** Every addon holds copies of what it has heard and relays them (§8.3), so a lost local file refills over time through queries. Ratings from players who have quit keep circulating as relayed copies.
 
 **What can still lose data:**
 - A game crash before logout or `/reload` loses that session's new entries. After a session with new ratings, the addon shows a reminder to `/reload` when out of combat [Proposed].
-- Deleting the WTF folder or moving to a new PC empties the local copy. It refills from other players, except ratings whose raters have stopped playing.
+- Deleting the WTF folder or moving to a new PC empties the local copy. It refills from other players: direct ratings from raters still playing, relayed copies for everyone else.
 - `Store.lua` carries a schema `version`, and data is migrated, never wiped, when the format changes.
 
 **Score consistency:** each addon calculates scores from the ratings it holds, so two players can see slightly different numbers. Their numbers converge as their addons sync.
+
+### 8.5 What it can't fully stop
+
+- **Alts rating themselves.** Someone levelling many alts to rate themselves. Those ratings carry stranger weight with no shared history, and players' own or friends' experience outweighs them.
+- **Invented relays.** A relayer can invent ratings from players who don't exist or never rated. Relays count at 0.2, a relayed death gets no heavy weight, and any contradiction from the real rater costs the relayer a strike. A group of alts relaying the same invented rating can reach the 0.5 weight for 3+ relayers, but never the weight of a direct rating.
+- Detecting alt rings properly would need a central server, which is out of scope.
 
 ## 9. Mage pipeline
 
@@ -277,15 +290,16 @@ If `SetTradeMoney` can't be called from the addon, "Open trade" opens the trade 
 ```lua
 TaxiDB = {                   -- account-wide
   version = 1,
-  ratings = {                -- heard directly, keyed by warlock "Name"
+  ratings = {                -- keyed by warlock "Name"
     ["Darkbolt"] = {
-      trust = { {rater, stars, rideId, ts, twoSided, kind}, ... },  -- kind: "rating" | "death"
-      share = { {rater, stars, shiftId, ts, owed, received, pct}, ... },
-    },
+      trust = { {rater, stars, rideId, ts, twoSided, kind, via}, ... },  -- kind: "rating" | "death"
+      share = { {rater, stars, shiftId, ts, owed, received, pct, via}, ... },
+    },                       -- via: nil if heard directly, else { relayerName, ... }
   },
-  given  = { ... },          -- ratings this account gave, kept permanently
-  rides  = { ... },          -- my own rides as traveler, summoner, clicker or mage
-  liars  = { ["Name"] = ts },-- raters whose reports were discarded
+  given   = { ... },         -- ratings this account gave, kept permanently
+  rides   = { ... },         -- my own rides as traveler, summoner, clicker or mage
+  liars   = { ["Name"] = ts },      -- raters whose reports were discarded
+  strikes = { ["Name"] = count },   -- relayers caught contradicting a direct rating
   settings = { ... },
 }
 TaxiCharDB = { stand = { seats = 3, clickerPct = 25, note = "" } }  -- per character
@@ -312,7 +326,7 @@ Prefix `TaxiFvr`. The format is `v1|TYPE|field|field…`, compact and split into
 | `DEATH` | channel | rideId, victim, secondsAfterArrival, source (self/group/server) |
 | `TIP` / `TIP_ACK` | party/raid | rideId, amount |
 | `PORTAL_UP` | party/raid | — |
-| `QUERY` / `QUERY_R` | channel / whisper | target / ratings |
+| `QUERY` / `QUERY_R` | channel / whisper | target / own ratings and relayed records (original rater, stars, id, ts, kind) |
 
 Throttle budget: heartbeats every 60 s with random jitter, everything else is event-driven. Under lockdown, outgoing messages are queued and the UI shows "Paused (instance)".
 
@@ -328,6 +342,7 @@ Throttle budget: heartbeats every 60 s with random jitter, everything else is ev
 - two-sided vs one-sided ratings;
 - a death within and outside the 2-minute window;
 - liar detection;
+- relays: low weight, the 3-relayer bonus, upgrade to direct, a contradiction giving a strike, 3 strikes ignored, a relay of a relay rejected, a relayed death getting no heavy weight;
 - ledger agree and dispute cases with different clicker percentages;
 - store migration and pruning;
 - message round-trip encoding.
@@ -341,7 +356,8 @@ A harness in `tests/sim/` runs **many simulated clients** of the real `Domain/` 
 Each scenario checks what every client ends up believing:
 - **Normal loop:** stand → clickers negotiate → travelers request → raid conversion → summons → tips → ratings → query sync for a newly installed client.
 - **Wrong-destination summon:** the guard returns RED.
-- **Ratings attacks:** a forged rating relayed by a third party is ignored; an alt ring self-boosting barely moves the score; a warlock skipping `RIDE_LOG` still gets a reduced-weight rating.
+- **Ratings attacks:** a relayer inventing ratings only reaches relayed weight and gets strikes when contradicted; an alt ring self-boosting barely moves the score; a warlock skipping `RIDE_LOG` still gets a reduced-weight rating.
+- **History survival:** raters who quit, followed by a fresh install that recovers their ratings as relayed copies.
 - **Deaths:** a death within 2 minutes of arrival gives the warlock 1★; a fake death claim by a player who is still alive gets the liar discarded.
 - **Payouts:** a stingy warlock gets a low Share rating; a disputed tip is shown as disputed.
 - **Network trouble:** message loss and throttling, an addon version mismatch, a crash before save, and a wiped WTF folder refilling over time.
