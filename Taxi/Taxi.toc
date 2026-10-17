@@ -14,6 +14,7 @@ Domain\Store.lua
 Domain\Stand.lua
 Domain\Board.lua
 Domain\Negotiation.lua
+Domain\Ride.lua
 Comms\Protocol.lua
 Comms\Transport.lua
 Sim\Clock.lua
