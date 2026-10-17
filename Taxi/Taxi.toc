@@ -18,6 +18,7 @@ Domain\Ride.lua
 Domain\SummonGuard.lua
 Domain\Ratings.lua
 Domain\Witness.lua
+Domain\Ledger.lua
 Comms\Protocol.lua
 Comms\Transport.lua
 Sim\Clock.lua
