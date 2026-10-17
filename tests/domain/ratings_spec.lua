@@ -1171,11 +1171,61 @@ describe("Ratings", function()
         assert.are.equal(3, s.count)
       end)
 
-      it("does not apply the one-sided cap to share ratings", function()
+    end)
+
+    describe("a rater's direct share ratings count once (R29)", function()
+      it("counts one of 30 backdated 5 star share ratings from one alt next to an honest 1 star", function()
+        for i = 1, 30 do
+          assert.is_true(direct(share("Evil Alt", 5, "a" .. i, T0 - i * DAY)))
+        end
+        assert.is_true(direct(share("Cal Dunn", 1, "h1")))
+        assert.are.equal(31, #db.ratings["Ana Smith"].share, "all of them are kept")
+        local s = shareSummary()
+        near(round1((1.0 * 5 + 1.0 * 1) / 2.0), s.stars, "stars")
+        near(3.0, s.stars, "stars")
+        near((5 * 3.5 + 5 + 1) / (5 + 2.0), s.score, "score")
+        assert.are.equal(2, s.count)
+        assert.is_true(s.isNew)
+      end)
+
+      it("does not let one alt's share ratings clear New", function()
+        for i = 1, 30 do
+          assert.is_true(direct(share("Evil Alt", 5, "a" .. i, T0 - i * DAY)))
+        end
+        assert.is_true(shareSummary().isNew)
+        assert.are.equal(1, shareSummary().count)
+        for i = 1, 4 do
+          assert.is_true(direct(share("Rater " .. i, 4, "r" .. i)))
+        end
+        assert.is_false(shareSummary().isNew, "five different raters")
+      end)
+
+      it("is not lifted by ride logs that name the rater", function()
+        for i = 1, 5 do
+          rideLog("a" .. i, "Evil Alt")
+          assert.is_true(direct(share("Evil Alt", 5, "a" .. i, T0 - i * DAY)))
+        end
+        assert.are.equal(1, shareSummary().count)
+        near((5 * 3.5 + 5) / (5 + 1.0), shareSummary().score, "score")
+      end)
+
+      it("counts the newest, whichever order they arrive in", function()
+        assert.is_true(direct(share("Cal Dunn", 1, "a1", T0 + DAY)))
+        assert.is_true(direct(share("Cal Dunn", 5, "a2", T0)))
+        assert.are.equal(1, shareSummary().stars)
+        db.ratings["Ana Smith"].share[1].ts = T0 - DAY
+        assert.are.equal(5, shareSummary().stars)
+      end)
+
+      it("keeps different raters apart and leaves relayed share ratings under the relay caps", function()
         assert.is_true(direct(share("Cal Dunn", 5, "a1", T0)))
-        assert.is_true(direct(share("Cal Dunn", 3, "a2", T0 + DAY)))
+        assert.is_true(direct(share("Dan Eve", 3, "a2", T0)))
         near(4.0, shareSummary().stars, "stars")
         assert.are.equal(2, shareSummary().count)
+        for i = 1, 50 do
+          assert.is_true(R.addRelayed(db, share("Fake " .. i, 1, "f" .. i), "Rel Ay"))
+        end
+        near((5 * 3.5 + 5 + 3 + 0.5 * 1) / (5 + 2.0 + 0.5), shareSummary().score, "score")
       end)
     end)
 

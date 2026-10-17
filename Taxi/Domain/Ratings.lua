@@ -14,7 +14,8 @@ local _, ns = ...
 --     rater's own rating, other stars) gets a strike, and one with
 --     STRIKES_MAX strikes is ignored;
 --   * a rating counts in full only when the warlock's ride log names its
---     rater; all of one rater's other (one-sided) ratings count as one;
+--     rater; all of one rater's other (one-sided) trust ratings count as one,
+--     and so do all of a rater's direct share ratings;
 --   * records dated ahead of the receiver's clock are refused;
 --   * a player caught lying is ignored altogether;
 --   * a death after a summon weighs heavily.
@@ -609,7 +610,8 @@ end
 --     warlock's ride log for its id names its rater as the traveler, else
 --     one-sided (W_ONE_SIDED); all of one rater's one-sided ratings together
 --     count as one, the newest, and the rest weigh nothing (but are kept);
---   * a direct share rating weighs W_TWO_SIDED;
+--   * all of one rater's direct share ratings together count as one, the
+--     newest, at W_TWO_SIDED; the rest weigh nothing (but are kept);
 --   * a relayed rating or light death with relayers weighs what weighRelayed
 --     leaves it; a light death nobody relayed (seen first hand) weighs
 --     W_RELAYED; a heavy death weighs W_DEATH.
@@ -635,15 +637,17 @@ function M.summary(db, target, kind)
     local list = stored(db, name, kind)
     local logs = sub(db, "rideLogs", name)
 
-    -- Each rater's newest one-sided trust rating is the only one that counts.
+    -- A rater's direct share ratings, and their direct one-sided trust ratings
+    -- (the ride log does not name them), count once: only the newest does.
+    local function countsOnce(r)
+      return kind == "share" or not namesRater(logs, r)
+    end
     local newest = {}
-    if kind == "trust" then
-      for _, r in ipairs(list) do
-        if validRating(r, kind) and r.via == nil and not isLiar(db, r.rater) and not namesRater(logs, r) then
-          local best = newest[r.rater]
-          if best == nil or r.ts > best.ts or (r.ts == best.ts and r.id > best.id) then
-            newest[r.rater] = r
-          end
+    for _, r in ipairs(list) do
+      if validRating(r, kind) and r.via == nil and not isLiar(db, r.rater) and countsOnce(r) then
+        local best = newest[r.rater]
+        if best == nil or r.ts > best.ts or (r.ts == best.ts and r.id > best.id) then
+          newest[r.rater] = r
         end
       end
     end
@@ -652,10 +656,10 @@ function M.summary(db, target, kind)
       if validRating(r, kind) and not isLiar(db, r.rater) then
         if r.via == nil then
           local weight
-          if kind == "share" or namesRater(logs, r) then
+          if not countsOnce(r) then
             weight = C.W_TWO_SIDED
           elseif newest[r.rater] == r then
-            weight = C.W_ONE_SIDED
+            weight = kind == "share" and C.W_TWO_SIDED or C.W_ONE_SIDED
           end
           if weight then
             entries[#entries + 1] = { stars = r.stars, weight = weight }
