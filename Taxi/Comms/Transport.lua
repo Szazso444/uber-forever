@@ -83,9 +83,27 @@ function Transport:send(msgType, fields, dist, target)
   return msgId
 end
 
+-- The longest msgId send() writes: four hex digits of time, four of counter.
+local LONGEST_MSGID = "ffffffff"
+
+-- Whether send() would take the message: true when it needs at most
+-- MAX_CHUNKS chunks even with the longest msgId. For a caller that has to
+-- choose what goes into a message (a reply with many records, say).
+function M.fits(msgType, fields)
+  local text = Protocol.encode(msgType, LONGEST_MSGID, fields)
+  return math.ceil(#text / Config.CHUNK_PAYLOAD) <= MAX_CHUNKS
+end
+
 -- Chunks waiting to be sent.
 function Transport:queued()
   return self.last - self.first + 1
+end
+
+-- Drops every chunk waiting to be sent, so nothing queued so far goes out.
+-- Messages sent afterwards are queued and sent as usual.
+function Transport:clear()
+  self.queue = {}
+  self.first, self.last = 1, 0
 end
 
 function Transport:sweep(now)

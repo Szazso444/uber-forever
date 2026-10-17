@@ -100,6 +100,17 @@ describe("Transport", function()
       assert.are.equal(16, a:queued())
     end)
 
+    it("fits() says whether a message fits in 16 chunks even with the longest msgId", function()
+      local room = 16 * ns.Config.CHUNK_PAYLOAD - #ns.Protocol.encode("STAND", "ffffffff", stand(0))
+      assert.is_true(ns.Transport.fits("STAND", stand(room)))
+      assert.is_false(ns.Transport.fits("STAND", stand(room + 1)))
+      -- At a time whose msgId is the longest, send() agrees with fits().
+      local t = ns.Transport.new{backend = {send = function() return 0 end, inLockdown = function() return false end},
+        clock = ns.Clock.new(65535), prefix = "TaxiFvr", onMessage = function() end}
+      assert.is_string(t:send("STAND", stand(room), "CHANNEL"))
+      assert.are.same({nil, "too_large"}, {t:send("STAND", stand(room + 1), "CHANNEL")})
+    end)
+
     it("delivers a message of exactly 16 chunks", function()
       a:send("STAND", stand(noteForChunks(16)), "CHANNEL")
       run(12)
@@ -111,6 +122,20 @@ describe("Transport", function()
       a:send("QUERY", {target = "T"}, "CHANNEL")
       a:send("STAND", {standId = "s", note = string.rep("n", 700)}, "CHANNEL")
       assert.are.equal(5, a:queued())
+    end)
+
+    it("clear() drops every queued chunk, and later sends go out as usual", function()
+      a:send("QUERY", {target = "T"}, "CHANNEL")
+      a:send("STAND", {standId = "s", note = string.rep("n", 700)}, "CHANNEL")
+      a:clear()
+      assert.are.equal(0, a:queued())
+      run(2)
+      assert.are.equal(0, #bus:sent())
+      assert.are.equal(0, #got)
+      a:send("QUERY", {target = "After"}, "CHANNEL")
+      run(1)
+      assert.are.equal(1, #got)
+      assert.are.equal("After", got[1].m.target)
     end)
   end)
 

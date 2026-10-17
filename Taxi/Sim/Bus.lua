@@ -106,6 +106,21 @@ function Bus:attach(name, faction, receiveFn)
   }
 end
 
+-- Takes a player off the server (they log out). Messages still on their way to
+-- them are lost, and their old backend's sends are refused from then on. The
+-- name can be attached again, as a new player.
+function Bus:detach(name)
+  local player = self:player(name)
+  player.detached = true
+  self.players[name] = nil
+  for i, p in ipairs(self.order) do
+    if p == player then
+      table.remove(self.order, i)
+      break
+    end
+  end
+end
+
 -- groupId puts the player in a group (PARTY and RAID reach its other members);
 -- nil takes them out of any group.
 function Bus:setGroup(name, groupId)
@@ -169,6 +184,9 @@ function Bus:recipients(sender, dist, target)
 end
 
 function Bus:transmit(sender, prefix, text, dist, target)
+  if sender.detached then
+    return GENERAL_ERROR
+  end
   if sender.locked then
     return LOCKDOWN
   end
@@ -188,7 +206,9 @@ function Bus:transmit(sender, prefix, text, dist, target)
   for _, recipient in ipairs(recipients) do
     if not (self.dropRate > 0 and self:random() < self.dropRate) then
       self.clock:after(self.latency, function()
-        recipient.receive(prefix, text, dist, sender.name)
+        if not recipient.detached then
+          recipient.receive(prefix, text, dist, sender.name)
+        end
       end)
     end
   end
