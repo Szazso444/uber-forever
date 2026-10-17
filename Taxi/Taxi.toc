@@ -23,6 +23,9 @@ Comms\Protocol.lua
 Comms\Transport.lua
 App\Engine.lua
 App\Reputation.lua
+App\Driver.lua
+App\Traveler.lua
+App\Clicker.lua
 Sim\Clock.lua
 Sim\Bus.lua
 Sim\World.lua

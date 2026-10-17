@@ -310,14 +310,6 @@ function Engine:inGroup(name)
   return not Names.same(name, self.me) and Names.normalize(name) ~= nil and self.game:unitFor(name) ~= nil
 end
 
--- Placeholders until the services define the real actions.
-local function unavailable()
-  return nil, "unavailable"
-end
-Engine.openStand = Engine.action(unavailable)
-Engine.requestRide = Engine.action(unavailable)
-Engine.applyClicker = Engine.action(unavailable)
-
 -- Closes my stand: STAND_END goes out (once messages can) and STAND_CHANGED
 -- tells the UI. Returns whether there was a stand to close.
 function Engine:closeStand()

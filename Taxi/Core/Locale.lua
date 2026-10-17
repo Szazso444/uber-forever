@@ -29,6 +29,7 @@ M.GUARD_TRUST_BAD = "Low or new Trust rating"
 M.STATUS_CHANNEL_FULL = "Taxi needs a free chat channel. Leave one (e.g. /leave 5) and /reload."
 M.STATUS_LOCKDOWN = "Paused (instance)"
 M.STATUS_UPDATE = "A newer Taxi version is in use. Please update."
+M.STATUS_LEAVE_GROUP = "Leave your group so the driver can invite you." -- App/Traveler.lua
 
 function M.fmt(key, ...)
   return string.format(M[key], ...)
