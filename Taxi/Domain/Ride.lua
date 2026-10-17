@@ -35,9 +35,9 @@ local EVENTS = {
 }
 
 -- The id both sides can agree on without talking: who drives, who travels, and
--- when the ride was requested.
+-- when the ride was requested, in whole seconds (the clock may be fractional).
 function M.makeId(driver, traveler, now)
-  return driver .. "@" .. traveler .. "@" .. now
+  return driver .. "@" .. traveler .. "@" .. math.floor(now)
 end
 
 -- `o`: rideId (nil until the driver accepts), kind ("summon" or "portal"),

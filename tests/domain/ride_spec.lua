@@ -70,6 +70,13 @@ describe("Ride", function()
     it("joins driver, traveler and time with @", function()
       assert.are.equal("Dar Kbolt@Tra Vler@1234", Ride.makeId("Dar Kbolt", "Tra Vler", 1234))
     end)
+
+    it("floors a fractional time, so both sides build the same id", function()
+      assert.are.equal("a@b@12", Ride.makeId("a", "b", 12.7))
+      assert.are.equal("a@b@12", Ride.makeId("a", "b", 12.2))
+      assert.are.equal("a@b@12", Ride.makeId("a", "b", 12))
+      assert.are.equal("Dar Kbolt@Tra Vler@1760000000", Ride.makeId("Dar Kbolt", "Tra Vler", 1760000000.9))
+    end)
   end)
 
   describe("new", function()
