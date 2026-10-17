@@ -15,6 +15,7 @@ Domain\Stand.lua
 Domain\Board.lua
 Domain\Negotiation.lua
 Domain\Ride.lua
+Domain\SummonGuard.lua
 Comms\Protocol.lua
 Comms\Transport.lua
 Sim\Clock.lua
