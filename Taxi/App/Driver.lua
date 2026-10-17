@@ -235,8 +235,25 @@ end
 
 -- Requests ---------------------------------------------------------------------------
 
+-- A request repeated while its ride is live is not a new request, but it means
+-- the traveler heard nothing from me. If I accepted it, my ACCEPT was lost (R49):
+-- say it again, the very same one (it names the same ride), and invite him again
+-- if he has not joined. The wait for him to join is not started over, so
+-- repeating the request can't hold a seat. A request I have not answered yet
+-- gets no answer.
+local function repeatAnswer(e, stand, ride)
+  if ride.rideId == nil then
+    return
+  end
+  e:send("ACCEPT", { rideId = ride.rideId, standId = stand.standId }, "WHISPER", ride.traveler)
+  if ride.state == "accepted" and not e:inGroup(ride.traveler) then
+    e.game:invite(ride.traveler)
+  end
+end
+
 -- A traveler asks for a seat. The owner and the stand's own clickers can't
--- ride on it (R19); a request repeated while its ride is live is ignored.
+-- ride on it (R19); a request repeated while its ride is live is not filed
+-- again (see repeatAnswer).
 Engine.handlers.REQUEST = function(e, msg, sender)
   local stand = e.stand
   if stand == nil or msg.standId ~= stand.standId then
@@ -249,6 +266,7 @@ Engine.handlers.REQUEST = function(e, msg, sender)
   local key = traveler .. "#" .. stand.standId
   local old = e.rides[key]
   if old ~= nil and not Ride.isFinal(old) then
+    repeatAnswer(e, stand, old)
     return
   end
   local kind, dest = "summon", nil

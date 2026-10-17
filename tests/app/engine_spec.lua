@@ -386,6 +386,10 @@ describe("Engine core", function()
     end)
   end)
 
+  it("sweeps the board and the witness every Engine.TICK_INTERVAL seconds", function()
+    assert.are.equal(30, ns.Engine.TICK_INTERVAL)
+  end)
+
   describe("instances", function()
     after_each(function() assert.are.same({}, w.errors) end)
 

@@ -87,12 +87,23 @@ Engine.handlers.ARRIVED = function(e, msg, sender)
   end
 end
 
+-- Files a ride log the warlock itself vouched for. The log backs the traveler's
+-- report of a death on that ride: a report that came first as an unproven one
+-- becomes heavy now (R48). Returns whether the log was stored.
+local function fileRideLog(e, warlock, rideId, ts, traveler, now)
+  if not Ratings.addRideLog(e.db, warlock, rideId, ts, traveler, now) then
+    return false
+  end
+  e.dirty = true
+  e.witness:corroborate(warlock, rideId, now)
+  return true
+end
+
 -- The warlock's own log of a ride it gave.
 Engine.handlers.RIDE_LOG = function(e, msg, sender)
   local now = e.clock:now()
-  if rideOf(msg.rideId, sender, msg.traveler)
-    and Ratings.addRideLog(e.db, sender, msg.rideId, now, msg.traveler, now) then
-    e.dirty = true
+  if rideOf(msg.rideId, sender, msg.traveler) then
+    fileRideLog(e, sender, msg.rideId, now, msg.traveler, now)
   end
 end
 
@@ -220,7 +231,7 @@ local function useRecord(e, target, r, sender, now)
   elseif r.kind == "ridelog" then
     -- Only the warlock's own logs, in its own reply about itself.
     if Names.same(r.rater, sender) and Names.same(sender, target) and rideOf(r.id, sender, r.other) then
-      return Ratings.addRideLog(e.db, sender, r.id, r.ts, r.other, now) == true
+      return fileRideLog(e, sender, r.id, r.ts, r.other, now)
     end
   elseif r.kind == "death" then
     -- Always second hand, and through the witness so that the relayer can be

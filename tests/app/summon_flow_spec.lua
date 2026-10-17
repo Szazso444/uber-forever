@@ -324,6 +324,85 @@ describe("Driver", function()
     assert.are.equal(ride, last(t, "RIDE_CHANGED")[2])
   end)
 
+  describe("a request repeated after the warlock accepted it (R49)", function()
+    local s, key, ride
+    local function resend()
+      t.engine:send("REQUEST", {standId = s.standId, offer = 0, level = 44}, "WHISPER", "Dar Kbolt")
+    end
+    before_each(function()
+      s = lock.engine:openStand{kind = "lock"}; w:advance(1)
+      key = "Tra Veler#" .. s.standId
+      ride = t.engine:requestRide(s.standId, 0); w:advance(2)
+    end)
+
+    it("says the same ACCEPT again and invites the traveler again", function()
+      local rideId = lock.engine:acceptRequest(key); w:advance(2)
+      assert.are.equal(1, #wireOf(ns, w, "ACCEPT", "Dar Kbolt"))
+      t.invitedBy = nil -- the first invite is gone
+      resend(); w:advance(2)
+      local accepts = wireOf(ns, w, "ACCEPT", "Dar Kbolt")
+      assert.are.equal(2, #accepts)
+      assert.are.same({rideId, s.standId, "WHISPER", "Tra Veler"}, {accepts[2].rideId, accepts[2].standId, accepts[2].dist, accepts[2].to})
+      assert.are.equal("Dar Kbolt", t.invitedBy)
+      -- It is the same ride: one request received, one seat, the same state.
+      assert.are.equal(1, #emitted(lock, "REQUEST_RECEIVED"))
+      assert.are.same({"Tra Veler"}, s.travelers)
+      assert.are.same({"accepted", rideId}, {lock.engine.rides[key].state, lock.engine.rides[key].rideId})
+    end)
+
+    it("completes the traveler's ride when his first ACCEPT was lost", function()
+      w.bus:setDropRate(1)
+      lock.engine:acceptRequest(key); w:advance(2)
+      w.bus:setDropRate(0)
+      assert.are.equal("requested", ride.state)
+      w:advance(ns.Config.RETRY_TIMEOUT) -- his REQUEST goes out again
+      assert.are.equal("accepted", ride.state)
+      assert.are.equal(lock.engine.rides[key].rideId, ride.rideId)
+      assert.is_true(w:acceptInvite("Tra Veler")); w:advance(1)
+      assert.are.equal("grouped", ride.state)
+    end)
+
+    it("joins a traveler who took the invite while his ACCEPT was lost", function()
+      w.bus:setDropRate(1)
+      lock.engine:acceptRequest(key); w:advance(2)
+      w.bus:setDropRate(0)
+      assert.is_true(w:acceptInvite("Tra Veler")); w:advance(1) -- in the group, ride still "requested" on his side
+      assert.are.equal("requested", ride.state)
+      w:advance(ns.Config.RETRY_TIMEOUT)
+      assert.are.equal("grouped", ride.state)
+      assert.is_table(t.engine.witness.rides[ride.rideId]) -- the RIDE_START went out: deaths can be tied to this ride
+    end)
+
+    it("does not invite a traveler who is in the group already, but still answers", function()
+      lock.engine:acceptRequest(key); w:advance(2)
+      assert.is_true(w:acceptInvite("Tra Veler")); w:advance(1)
+      assert.is_nil(t.invitedBy)
+      resend(); w:advance(2)
+      assert.are.equal(2, #wireOf(ns, w, "ACCEPT", "Dar Kbolt"))
+      assert.is_nil(t.invitedBy)
+      assert.are.equal("grouped", ride.state) -- the repeated ACCEPT changes nothing
+    end)
+
+    it("does not start the 60 s wait over, so repeating the request can't hold the seat", function()
+      lock.engine:acceptRequest(key); w:advance(30)
+      resend(); w:advance(29)
+      assert.are.equal("accepted", lock.engine.rides[key].state)
+      w:advance(3) -- 62 s after the accept
+      assert.are.equal("cancelled", lock.engine.rides[key].state)
+      assert.are.same({}, s.travelers)
+    end)
+
+    it("answers nothing for a request that is still waiting, and a new one once the ride ended", function()
+      resend(); w:advance(2)
+      assert.are.same({}, wireOf(ns, w, "ACCEPT", "Dar Kbolt"))
+      assert.is_true(lock.engine:declineRequest(key, "busy")); w:advance(2)
+      local again = t.engine:requestRide(s.standId, 0); w:advance(2)
+      assert.are.equal("requested", lock.engine.rides[key].state)
+      assert.are.equal(again, t.engine.rides[key])
+      assert.are.equal(2, #emitted(lock, "REQUEST_RECEIVED"))
+    end)
+  end)
+
   it("says full when every seat is taken, and unknown_ride for anything else", function()
     local t2 = add("Tre Two")
     local s = lock.engine:openStand{kind = "lock", seats = 1}; w:advance(1)
@@ -538,6 +617,15 @@ describe("Traveler", function()
     assert.are.same({s.standId, 0, 44, "WHISPER", "Dar Kbolt"}, {sent[1].standId, sent[1].offer, sent[1].level, sent[1].dist, sent[1].to})
   end)
 
+  it("a stand past its TTL can't be asked for a ride even before the sweep has removed it (R51)", function()
+    local s = lock.engine:openStand{kind = "lock"}; w:advance(1)
+    w:removePlayer("Dar Kbolt") -- no STAND_END
+    w:advance(ns.Config.STAND_TTL) -- the board sweep runs every 30 s and has not reached it yet
+    assert.is_not_nil(t.engine.board.stands[s.standId])
+    assert.is_nil(ns.Board.get(t.engine.board, s.standId, w.clock:now()))
+    assert.are.same({nil, "unknown_stand"}, {t.engine:requestRide(s.standId, 0)})
+  end)
+
   it("takes ACCEPT and DECLINE only from its driver, and an ACCEPT only with a ride id naming us both", function()
     local s = lock.engine:openStand{kind = "lock"}; w:advance(1)
     local ride = t.engine:requestRide(s.standId, 0)
@@ -672,7 +760,57 @@ describe("Traveler", function()
     assert.are.equal("arrived", ride.state)
     assert.is_true(ride.wrongPlace)
     w:advance(1)
-    assert.are.equal(1, #wireOf(ns, w, "ARRIVED", "Tra Veler"))
+    assert.are.equal(2, #wireOf(ns, w, "ARRIVED", "Tra Veler")) -- one arrival: the channel and the driver (R50)
+  end)
+
+  describe("ARRIVED goes to the channel and by whisper to the driver (R50)", function()
+    it("sends the same ARRIVED twice, once to each", function()
+      local _, ride = grouped()
+      w:offerSummon("Dar Kbolt", "Tra Veler"); w:acceptSummon("Tra Veler"); w:advance(1)
+      local sent = wireOf(ns, w, "ARRIVED", "Tra Veler")
+      assert.are.equal(2, #sent)
+      assert.are.same({ride.rideId, "Dar Kbolt", "CHANNEL"}, {sent[1].rideId, sent[1].warlock, sent[1].dist})
+      assert.are.same({ride.rideId, "Dar Kbolt", "WHISPER", "Dar Kbolt"}, {sent[2].rideId, sent[2].warlock, sent[2].dist, sent[2].to})
+    end)
+
+    it("the warlock still logs the ride and says RIDE_LOG when the channel ARRIVED is lost", function()
+      local _, ride = grouped()
+      local send = t.engine.send
+      t.engine.send = function(e, msgType, fields, dist, ...)
+        if msgType == "ARRIVED" and dist == "CHANNEL" then return nil, "lost" end
+        return send(e, msgType, fields, dist, ...)
+      end
+      w:offerSummon("Dar Kbolt", "Tra Veler"); w:acceptSummon("Tra Veler"); w:advance(2)
+      local mine = lock.engine.rides["Tra Veler#" .. ride.standId]
+      assert.are.equal("arrived", mine.state)
+      assert.are.equal("Tra Veler", lock.db.rideLogs["Dar Kbolt"][ride.rideId].traveler)
+      local logs = wireOf(ns, w, "RIDE_LOG", "Dar Kbolt")
+      assert.are.equal(1, #logs)
+      assert.are.same({ride.rideId, "Tra Veler"}, {logs[1].rideId, logs[1].traveler})
+    end)
+
+    it("a driver hearing it twice logs and answers once, and keeps the first receipt time", function()
+      local _, ride = grouped()
+      w:offerSummon("Dar Kbolt", "Tra Veler"); w:acceptSummon("Tra Veler"); w:advance(2)
+      local arrivedAt = lock.engine.rides["Tra Veler#" .. ride.standId].times.arrived
+      local changes = #emitted(lock, "RIDE_CHANGED")
+      lock.engine:handle(assert(ns.Protocol.decode(ns.Protocol.encode("ARRIVED", "t9", {rideId = ride.rideId, warlock = "Dar Kbolt"}))), "Tra Veler", "WHISPER")
+      w:advance(2)
+      assert.are.equal(1, #wireOf(ns, w, "RIDE_LOG", "Dar Kbolt"))
+      assert.are.equal(changes, #emitted(lock, "RIDE_CHANGED"))
+      assert.are.equal(arrivedAt, lock.engine.rides["Tra Veler#" .. ride.standId].times.arrived)
+    end)
+
+    it("every other listener is idempotent too: a repeat keeps the receipt time and the arrival", function()
+      local _, ride = grouped()
+      w:offerSummon("Dar Kbolt", "Tra Veler"); w:acceptSummon("Tra Veler"); w:advance(2)
+      local receipt = lock.db.receipts["Dar Kbolt"][ride.rideId]
+      local arrival = lock.engine.witness.rides[ride.rideId].arrivedTs
+      w:advance(20)
+      lock.engine:handle(assert(ns.Protocol.decode(ns.Protocol.encode("ARRIVED", "t9", {rideId = ride.rideId, warlock = "Dar Kbolt"}))), "Tra Veler", "CHANNEL")
+      assert.are.equal(receipt, lock.db.receipts["Dar Kbolt"][ride.rideId])
+      assert.are.equal(arrival, lock.engine.witness.rides[ride.rideId].arrivedTs)
+    end)
   end)
 
   it("a declined summon (no move) is not an arrival (R43)", function()

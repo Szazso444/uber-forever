@@ -64,7 +64,7 @@ end
 -- The stand as the ride sees it: the live board view when there is one, else
 -- the copy taken when I asked (R6).
 local function standOf(e, ride)
-  return Board.get(e.board, ride.standId) or ride.stand
+  return Board.get(e.board, ride.standId, e.clock:now()) or ride.stand
 end
 
 local function offers(view, dest)
@@ -115,7 +115,7 @@ end
 -- ride, or nil and "disabled", "dead", "unknown_stand", "bad_offer",
 -- "bad_dest" or "pending" (a ride on this stand is under way).
 Engine.requestRide = Engine.action(function(e, standId, offer, dest)
-  local view = type(standId) == "string" and Board.get(e.board, standId) or nil
+  local view = type(standId) == "string" and Board.get(e.board, standId, e.clock:now()) or nil
   if view == nil then
     return nil, "unknown_stand"
   end
@@ -304,7 +304,7 @@ end
 -- after my request was accepted (the board's changedAt), or its place differs
 -- from the copy taken when I asked.
 local function standMoved(e, ride)
-  local view = Board.get(e.board, ride.standId)
+  local view = Board.get(e.board, ride.standId, e.clock:now())
   if view == nil then
     return true
   end
@@ -498,7 +498,10 @@ end
 
 -- I arrived: the ride says so, ARRIVED goes out (it opens the death window on
 -- every client that heard the start), and my own witness and receipts get it.
--- A summon that landed me away from the place I asked for is wrongPlace.
+-- A summon that landed me away from the place I asked for is wrongPlace. The
+-- driver gets ARRIVED a second time by whisper (R50): a lost channel message
+-- would otherwise leave his ride unfinished and his ride log unsent. Everyone
+-- who hears both handles the repeat as no news.
 local function arrive(e, ride, loc)
   local now = e.clock:now()
   Ride.apply(ride, "ARRIVED", now)
@@ -506,7 +509,9 @@ local function arrive(e, ride, loc)
     ride.summon = nil
     ride.wrongPlace = not atStand(ride.stand, loc)
   end
-  e:send("ARRIVED", { rideId = ride.rideId, warlock = ride.driver }, "CHANNEL")
+  local fields = { rideId = ride.rideId, warlock = ride.driver }
+  e:send("ARRIVED", fields, "CHANNEL")
+  e:send("ARRIVED", fields, "WHISPER", ride.driver)
   e.witness:arrived(ride.rideId, e.me, now, e.me)
   if Ratings.addReceipt(e.db, ride.driver, ride.rideId, now, now) then
     e.dirty = true

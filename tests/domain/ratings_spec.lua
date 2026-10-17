@@ -644,6 +644,100 @@ describe("Ratings", function()
       near(4.3, trustSummary().stars, "stars")
     end)
 
+    -- R48: a victim's own report that nothing else backs is a light death with
+    -- source "self": direct (no relayer), worth W_ONE_SIDED at 1 star.
+    describe("a light self-reported death (R48)", function()
+      local function lightSelf(fields)
+        local d = death({ heavy = false, source = "self" })
+        for k, v in pairs(fields or {}) do
+          d[k] = v
+        end
+        return d
+      end
+
+      it("weighs W_ONE_SIDED at 1 star and counts in deathsReported", function()
+        assert.is_true(R.addDeath(db, lightSelf()))
+        local d = db.deaths["Ana Smith"].r1
+        assert.are.same({ false, "self" }, { d.heavy, d.source })
+        assert.is_nil(d.via)
+        local s = trustSummary()
+        assert.are.equal(1, s.stars)
+        near((5 * 3.5 + 0.3 * 1) / (5 + 0.3), s.score, "score")
+        assert.are.same({ 1, 1 }, { s.deathsReported, s.count })
+      end)
+
+      it("is not under the relay caps: several victims' reports add up past RELAY_CAP_TOTAL", function()
+        for i = 1, 10 do
+          assert.is_true(R.addDeath(db, lightSelf({ id = "r" .. i, victim = "Vic Tim" .. i })))
+        end
+        local s = trustSummary()
+        near((5 * 3.5 + 10 * 0.3) / (5 + 10 * 0.3), s.score, "score")
+        assert.are.equal(10, s.deathsReported)
+        assert.is_true(10 * 0.3 > ns.Config.RATING.RELAY_CAP_TOTAL)
+      end)
+
+      it("does not clear New, whatever the number of them", function()
+        for i = 1, 4 do
+          assert.is_true(direct(trust("Rat Er" .. i, 4, "d" .. i)))
+        end
+        assert.is_true(trustSummary().isNew)
+        for i = 1, 10 do
+          assert.is_true(R.addDeath(db, lightSelf({ id = "r" .. i, victim = "Vic Tim" .. i })))
+        end
+        assert.is_true(trustSummary().isNew)
+        assert.is_true(R.addDeath(db, death({ id = "h1", victim = "Hea Vy", source = "observed" })))
+        assert.is_false(trustSummary().isNew, "a heavy death does")
+      end)
+
+      it("is stored as relayed when it names relayers, which a self report never has", function()
+        assert.is_true(R.addDeath(db, lightSelf({ via = { ["Rel Ay"] = true } })))
+        assert.are.equal("relayed", db.deaths["Ana Smith"].r1.source)
+      end)
+
+      it("is replaced by a heavy death and never replaces one", function()
+        assert.is_true(R.addDeath(db, lightSelf()))
+        assert.is_true(R.addDeath(db, death({ source = "self" })))
+        local d = db.deaths["Ana Smith"].r1
+        assert.are.same({ true, "self" }, { d.heavy, d.source })
+        assert.is_true(R.addDeath(db, lightSelf()))
+        assert.is_true(db.deaths["Ana Smith"].r1.heavy)
+      end)
+
+      it("stays direct when relayers repeat it, and keeps the self source", function()
+        assert.is_true(R.addDeath(db, lightSelf()))
+        assert.is_true(R.addDeath(db, death({ heavy = false, via = { ["Rel Ay"] = true } })))
+        local d = db.deaths["Ana Smith"].r1
+        assert.is_nil(d.via)
+        assert.are.equal("self", d.source)
+        near((5 * 3.5 + 0.3) / (5 + 0.3), trustSummary().score, "score")
+      end)
+
+      it("takes over from a relayed copy: first hand, no relayers", function()
+        assert.is_true(R.addDeath(db, death({ heavy = false, via = { ["Rel Ay"] = true } })))
+        assert.is_true(R.addDeath(db, lightSelf()))
+        local d = db.deaths["Ana Smith"].r1
+        assert.is_nil(d.via)
+        assert.are.equal("self", d.source)
+      end)
+
+      it("is ignored with its victim when the victim is a liar", function()
+        assert.is_true(R.addDeath(db, lightSelf()))
+        R.markLiar(db, "Cal Dunn", T0)
+        local s = trustSummary()
+        assert.is_nil(s.stars)
+        assert.are.equal(0, s.deathsReported)
+      end)
+
+      it("is not passed on in a query reply: only heavy deaths are", function()
+        assert.is_true(R.addDeath(db, lightSelf()))
+        assert.are.same({}, R.replyRecords(db, "Ana Smith", "Zed Quux", 50))
+        assert.is_true(R.addDeath(db, death({ id = "r2", victim = "Dee Ad", source = "self" })))
+        local recs = R.replyRecords(db, "Ana Smith", "Zed Quux", 50)
+        assert.are.equal(1, #recs)
+        assert.are.equal("r2", recs[1].id)
+      end)
+    end)
+
     it("heavy replaces light", function()
       assert.is_true(R.addDeath(db, death({ heavy = false, via = { ["Rel Ay"] = true } })))
       assert.is_true(R.addDeath(db, death({ heavy = true })))
@@ -800,6 +894,14 @@ describe("Ratings", function()
     it("stores a receipt", function()
       assert.is_true(R.addReceipt(db, "Ana Smith", "r1", T0))
       assert.are.equal(T0, db.receipts["Ana Smith"].r1)
+    end)
+
+    it("keeps a receipt's first time when the same arrival is filed again (R50: ARRIVED comes twice)", function()
+      assert.is_true(R.addReceipt(db, "Ana Smith", "r1", T0))
+      assert.is_true(R.addReceipt(db, "Ana Smith", "r1", T0 + 1))
+      assert.are.equal(T0, db.receipts["Ana Smith"].r1)
+      assert.is_true(R.addReceipt(db, "Ana Smith", "r2", T0 + 2))
+      assert.are.equal(T0 + 2, db.receipts["Ana Smith"].r2)
     end)
 
     it("normalizes names and rejects malformed input", function()

@@ -43,6 +43,25 @@ local function rideTo(w, lock, p, standId)
   return ride
 end
 
+-- The player never gets the server's death notice (HC_DEATH): it was throttled
+-- or lost. He can learn of a death from the victim's own DEATH message only.
+local function deaf(p)
+  local onGame = p.engine.onGame
+  p.engine.onGame = function(e, event, ...)
+    if event == "HC_DEATH" then return end
+    return onGame(e, event, ...)
+  end
+end
+
+-- The warlock's addon never broadcasts its RIDE_LOG (it still keeps it).
+local function suppressRideLog(lock)
+  local send = lock.engine.send
+  lock.engine.send = function(e, msgType, ...)
+    if msgType == "RIDE_LOG" then return nil, "skipped" end
+    return send(e, msgType, ...)
+  end
+end
+
 -- The check of a guard verdict with this id.
 local function check(verdict, id)
   for _, c in ipairs(verdict.checks) do
@@ -225,11 +244,7 @@ describe("warlock that skips RIDE_LOG", function()
   end)
 
   it("without it the same rating counts one-sided (0.3), for everyone who heard it", function()
-    local send = lock.engine.send
-    lock.engine.send = function(e, msgType, ...)
-      if msgType == "RIDE_LOG" then return nil, "skipped" end
-      return send(e, msgType, ...)
-    end
+    suppressRideLog(lock)
     local ride = rateOnce()
     for _, p in ipairs{by, t} do
       assert.is_nil(p.db.rideLogs["Dar Kbolt"], p.name)
@@ -242,20 +257,25 @@ describe("warlock that skips RIDE_LOG", function()
 end)
 
 describe("death within the window", function()
-  local ns, w, lock, c1, by, t, stand, ride
+  local ns, w, lock, c1, by, blind, t, stand, ride
   before_each(function()
     ns = Taxi.load(); w = ns.World.new{seed = 34, start = 450000}
     lock = w:addPlayer{name = "Dar Kbolt", class = "WARLOCK", level = 45, place = "gadgetzan"}
     c1 = w:addPlayer{name = "Cee One", class = "PRIEST", level = 40, place = "gadgetzan"}
     by = w:addPlayer{name = "Bys Tander", class = "ROGUE", level = 44, place = "ironforge"}
+    blind = w:addPlayer{name = "Bli Nd", class = "ROGUE", level = 44, place = "ironforge"}
+    deaf(blind) -- hears everything but the server's death notice
     t = w:addPlayer{name = "Tra Veler", class = "HUNTER", level = 44, place = "ironforge", money = 50000}
     stand = lock.engine:openStand{kind = "lock"}; w:advance(2)
     ride = rideTo(w, lock, t, stand.standId)
   end)
   after_each(function() assert.are.same({}, w.errors) end)
 
+  local function stored(p)
+    return p.db.deaths["Dar Kbolt"] and p.db.deaths["Dar Kbolt"][ride.rideId]
+  end
   local function heavy(p)
-    local d = p.db.deaths["Dar Kbolt"] and p.db.deaths["Dar Kbolt"][ride.rideId]
+    local d = stored(p)
     return d ~= nil and d.heavy == true
   end
 
@@ -265,8 +285,11 @@ describe("death within the window", function()
       local late = w:addPlayer{name = "Lat Ecomer", class = "ROGUE", level = 44, place = "ironforge"} -- missed the start
       w:advance(1)
       w:kill("Tra Veler"); w:advance(2)
-      for _, p in ipairs{lock, c1, by, t} do
+      -- Those who saw the server's notice saw the death themselves; Bli Nd only
+      -- has the victim's report, which the warlock's RIDE_LOG (heard by all) backs.
+      for _, p in ipairs{lock, c1, by, t, blind} do
         assert.is_true(heavy(p), p.name)
+        assert.are.equal(p == blind and "self" or "observed", stored(p).source, p.name)
         local s = p.engine:summary("Dar Kbolt", "trust")
         assert.are.equal(1, s.deathsReported, p.name)
         assert.is_near(scoreOf(ns, {{1, ns.Config.RATING.W_DEATH}}), s.score, 1e-9, p.name)
@@ -278,7 +301,7 @@ describe("death within the window", function()
       -- The dead victim sends nothing more, so nobody takes him for a liar and
       -- the death stays on file.
       w:advance(ns.Config.ALIVE_GRACE + 60)
-      for _, p in ipairs{lock, c1, by, t} do
+      for _, p in ipairs{lock, c1, by, t, blind} do
         assert.is_true(heavy(p), p.name)
         assert.are.same({}, p.db.liars, p.name)
       end
@@ -289,7 +312,7 @@ describe("death within the window", function()
     it("a kill " .. secs .. " s after arrival records nothing", function()
       w:advance(secs)
       w:kill("Tra Veler"); w:advance(2)
-      for _, p in ipairs{lock, c1, by, t} do
+      for _, p in ipairs{lock, c1, by, t, blind} do
         assert.are.same({}, p.db.deaths, p.name)
         assert.are.equal(0, p.engine:summary("Dar Kbolt", "trust").deathsReported, p.name)
       end
@@ -324,12 +347,18 @@ describe("fake death claim", function()
 
   it("a living player who reports his own death is a liar on every observer once he is heard again", function()
     -- R7: RIDE_START, then DEATH{self}, then (after ALIVE_GRACE) a message that is not a DEATH.
+    -- He never rode: no accept, no arrival, no RIDE_LOG from the warlock behind it.
     assert.is_string(fake.engine:send("RIDE_START", {rideId = id, warlock = "Dar Kbolt"}, "CHANNEL")); w:advance(2)
     assert.is_string(fake.engine:send("DEATH", {rideId = id, victim = "Fak Er", warlock = "Dar Kbolt", secs = 10,
       source = "self"}, "CHANNEL")); w:advance(2)
+    -- R48: a silent throwaway identity moves the warlock's score by a one-sided
+    -- rating's weight only, not a heavy death's. The warning is still there.
     for _, p in ipairs{lock, bo, cy} do
-      assert.is_true(p.db.deaths["Dar Kbolt"][id].heavy, p.name) -- believed for now
-      assert.are.equal(1, p.engine:summary("Dar Kbolt", "trust").deathsReported, p.name)
+      local d = p.db.deaths["Dar Kbolt"][id]
+      assert.are.same({false, "self", nil}, {d.heavy, d.source, d.via}, p.name)
+      local s = p.engine:summary("Dar Kbolt", "trust")
+      assert.are.same({1, true}, {s.deathsReported, s.isNew}, p.name)
+      assert.is_near(scoreOf(ns, {{1, ns.Config.RATING.W_ONE_SIDED}}), s.score, 1e-9, p.name)
     end
 
     w:advance(ns.Config.ALIVE_GRACE + 1)
@@ -349,6 +378,70 @@ describe("fake death claim", function()
     end
   end)
 
+  it("a throwaway identity cannot mint a death a second time: one claim per victim, on any warlock", function()
+    assert.is_string(fake.engine:send("RIDE_START", {rideId = id, warlock = "Dar Kbolt"}, "CHANNEL")); w:advance(1)
+    local other = ns.Ride.makeId("Eve Lock", "Fak Er", math.floor(w.clock:now()))
+    assert.is_string(fake.engine:send("RIDE_START", {rideId = other, warlock = "Eve Lock"}, "CHANNEL")); w:advance(1)
+    for _, ride in ipairs{{id, "Dar Kbolt"}, {other, "Eve Lock"}} do
+      fake.engine:send("DEATH", {rideId = ride[1], victim = "Fak Er", warlock = ride[2], secs = 10, source = "self"}, "CHANNEL")
+    end
+    w:advance(2)
+    for _, p in ipairs{lock, bo, cy} do
+      assert.is_truthy(p.db.deaths["Dar Kbolt"][id], p.name)
+      assert.is_nil(p.db.deaths["Eve Lock"], p.name)
+    end
+  end)
+end)
+
+-- R48 again, from the other side: the real death of an honest traveler. Bli Nd
+-- never gets the server's death notice, so he knows of the death from the
+-- victim's own report only.
+describe("a real death and the warlock's ride log (R48)", function()
+  local ns, w, lock, c1, blind, t, stand, ride
+  local function setup(suppress)
+    ns = Taxi.load(); w = ns.World.new{seed = 37, start = 480000}
+    lock = w:addPlayer{name = "Dar Kbolt", class = "WARLOCK", level = 45, place = "gadgetzan"}
+    c1 = w:addPlayer{name = "Cee One", class = "PRIEST", level = 40, place = "gadgetzan"}
+    blind = w:addPlayer{name = "Bli Nd", class = "ROGUE", level = 44, place = "ironforge"}
+    deaf(blind)
+    t = w:addPlayer{name = "Tra Veler", class = "HUNTER", level = 44, place = "ironforge", money = 50000}
+    if suppress then suppressRideLog(lock) end
+    stand = lock.engine:openStand{kind = "lock"}; w:advance(2)
+    ride = rideTo(w, lock, t, stand.standId)
+    w:advance(30)
+    w:kill("Tra Veler"); w:advance(2)
+  end
+  after_each(function() assert.are.same({}, w.errors) end)
+
+  local function death(p) return p.db.deaths["Dar Kbolt"][ride.rideId] end
+
+  it("an honest warlock's ride log makes the victim's report heavy for an observer who did not see him die", function()
+    setup(false)
+    assert.are.same({true, "self"}, {death(blind).heavy, death(blind).source})
+    assert.is_near(scoreOf(ns, {{1, ns.Config.RATING.W_DEATH}}), blind.engine:summary("Dar Kbolt", "trust").score, 1e-9)
+    assert.are.same({true, "observed"}, {death(c1).heavy, death(c1).source})
+  end)
+
+  it("a warlock who suppresses his ride logs leaves the report light for that observer, heavy for those who saw the death", function()
+    setup(true)
+    assert.is_nil(blind.db.rideLogs["Dar Kbolt"])
+    assert.are.same({false, "self"}, {death(blind).heavy, death(blind).source})
+    local s = blind.engine:summary("Dar Kbolt", "trust")
+    assert.are.same({1, true}, {s.deathsReported, s.isNew}) -- the warning is there
+    assert.is_near(scoreOf(ns, {{1, ns.Config.RATING.W_ONE_SIDED}}), s.score, 1e-9)
+    for _, p in ipairs{c1, lock, t} do
+      assert.are.same({true, "observed"}, {death(p).heavy, death(p).source}, p.name)
+      assert.is_near(scoreOf(ns, {{1, ns.Config.RATING.W_DEATH}}), p.engine:summary("Dar Kbolt", "trust").score, 1e-9, p.name)
+    end
+  end)
+
+  it("the warlock's answer to a query carries the log he did not broadcast, and the light death turns heavy", function()
+    setup(true)
+    assert.is_false(death(blind).heavy)
+    assert.is_true(blind.engine:query("Dar Kbolt")); w:advance(10)
+    assert.is_truthy(blind.db.rideLogs["Dar Kbolt"][ride.rideId])
+    assert.are.same({true, "self"}, {death(blind).heavy, death(blind).source})
+  end)
 end)
 
 describe("stingy warlock", function()

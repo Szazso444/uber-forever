@@ -41,14 +41,27 @@ function M.remove(b, standId)
   b.stands[standId] = nil
 end
 
-function M.get(b, standId)
-  return b.stands[standId]
+-- True when a stand heard last at view.seenAt is still listed at time now: not
+-- silent for more than STAND_TTL seconds. Without a time every stand is.
+local function listed(view, now)
+  return now == nil or now - view.seenAt <= ns.Config.STAND_TTL
+end
+
+-- The stand with this id, or nil. Given the current time `now`, a stand that has
+-- gone quiet for more than STAND_TTL is not there (R51): the sweep (expire)
+-- only runs now and then, and a stand must not outlive its TTL until it does.
+function M.get(b, standId, now)
+  local view = b.stands[standId]
+  if view ~= nil and not listed(view, now) then
+    return nil
+  end
+  return view
 end
 
 -- Drops every stand not heard from for more than STAND_TTL seconds.
 function M.expire(b, now)
   for standId, view in pairs(b.stands) do
-    if now - view.seenAt > ns.Config.STAND_TTL then
+    if not listed(view, now) then
       b.stands[standId] = nil
     end
   end
@@ -59,13 +72,16 @@ end
 --   zone           keep only stands in exactly this zone when given
 --   isGuildmate    function(owner) -> bool; guildmates sort first
 --   rank           function(owner) -> score, count
+--   now            the current time: stands silent for more than STAND_TTL are
+--                  left out (R51); without it every stand on the board is listed
 -- Order: guildmates, then higher score, then more ratings, then owner name.
 -- Without isGuildmate nobody is a guildmate; without rank everyone ranks 0, 0.
 function M.list(b, opts)
   opts = opts or {}
   local entries = {}
   for _, view in pairs(b.stands) do
-    if (opts.kind == nil or view.kind == opts.kind)
+    if listed(view, opts.now)
+      and (opts.kind == nil or view.kind == opts.kind)
       and (opts.faction == nil or view.faction == opts.faction)
       and (opts.zone == nil or view.zone == opts.zone) then
       -- Ask once per stand here, so the sort does not call back into rating

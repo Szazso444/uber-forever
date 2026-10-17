@@ -66,7 +66,7 @@ end
 -- "disabled", "dead", "unknown_stand", "own_stand", "mage" (portal stands have
 -- no clickers), "bad_pct" or "on_shift".
 Engine.applyClicker = Engine.action(function(e, standId, askedPct)
-  local view = type(standId) == "string" and Board.get(e.board, standId) or nil
+  local view = type(standId) == "string" and Board.get(e.board, standId, e.clock:now()) or nil
   local owner = Names.normalize(view and view.owner or idOwner(standId))
   if owner == nil or owner == "" then
     return nil, "unknown_stand"

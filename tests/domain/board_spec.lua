@@ -201,4 +201,66 @@ describe("Board", function()
       assert.are.equal(B.get(b, "s"), B.list(b, {})[1])
     end)
   end)
+
+  -- R51: a stand past its TTL is gone when read, not only when the sweep runs.
+  describe("reading at a time (R51)", function()
+    local TTL = 180
+
+    it("get hides a stand silent for longer than STAND_TTL, and keeps one exactly STAND_TTL old", function()
+      assert.are.equal(TTL, Taxi.load().Config.STAND_TTL)
+      local b = B.new()
+      B.upsert(b, view("s", "A B", {seenAt=10}), 10)
+      assert.is_not_nil(B.get(b, "s", 10 + TTL))
+      assert.is_nil(B.get(b, "s", 10 + TTL + 0.5))
+      assert.is_nil(B.get(b, "s", 10 + TTL + 3600))
+    end)
+
+    it("does not remove the entry: only expire does", function()
+      local b = B.new()
+      B.upsert(b, view("s", "A B", {seenAt=0}), 0)
+      assert.is_nil(B.get(b, "s", TTL + 1))
+      assert.is_not_nil(b.stands.s)
+      B.expire(b, TTL + 1)
+      assert.is_nil(b.stands.s)
+    end)
+
+    it("get without a time reads the board as it is", function()
+      local b = B.new()
+      B.upsert(b, view("s", "A B", {seenAt=0}), 0)
+      assert.is_not_nil(B.get(b, "s"))
+    end)
+
+    it("is measured from the last heartbeat", function()
+      local b = B.new()
+      B.upsert(b, view("s", "A B", {seenAt=0}), 0)
+      B.upsert(b, view("s", "A B", {seenAt=150}), 150)
+      assert.is_not_nil(B.get(b, "s", 150 + TTL))
+      assert.is_nil(B.get(b, "s", 150 + TTL + 1))
+    end)
+
+    it("list leaves out stands past the TTL when given now", function()
+      local b = B.new()
+      B.upsert(b, view("old", "Ann A", {seenAt=0}), 0)
+      B.upsert(b, view("edge", "Bob B", {seenAt=20}), 20)
+      B.upsert(b, view("new", "Cid C", {seenAt=100}), 100)
+      local function ids(l)
+        local out = {}
+        for i, v in ipairs(l) do out[i] = v.standId end
+        return out
+      end
+      assert.are.same({"edge", "new", "old"}, ids(B.list(b, {rank=function(n) return n == "Ann A" and 1 or 2, 0 end})))
+      assert.are.same({"edge", "new"}, ids(B.list(b, {now=200})))
+      assert.are.same({"new"}, ids(B.list(b, {now=201})))
+      assert.are.same({}, ids(B.list(b, {now=281})))
+    end)
+
+    it("list never asks about a stand it leaves out", function()
+      local b = B.new()
+      B.upsert(b, view("old", "Ann A", {seenAt=0}), 0)
+      B.upsert(b, view("new", "Bob B", {seenAt=100}), 100)
+      local asked = {}
+      B.list(b, {now=200, rank=function(n) asked[#asked + 1] = n; return 3, 1 end})
+      assert.are.same({"Bob B"}, asked)
+    end)
+  end)
 end)

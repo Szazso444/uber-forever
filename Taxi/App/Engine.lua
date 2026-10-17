@@ -31,6 +31,7 @@ Engine.__index = Engine
 
 local PUMP_INTERVAL = 0.2 -- seconds between transport pumps
 local TICK_INTERVAL = 30 -- seconds between board and witness expiry sweeps
+Engine.TICK_INTERVAL = TICK_INTERVAL -- for the UI and the simulation, which time themselves by it
 
 -- Handler registries ---------------------------------------------------------------
 

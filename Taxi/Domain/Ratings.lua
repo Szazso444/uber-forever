@@ -391,11 +391,15 @@ end
 -- ("observed"). Anything else is taken as "relayed".
 local SOURCE_RANK = { relayed = 1, self = 2, observed = 3 }
 
--- The source a death is stored with. Only a heavy (first-hand) death can have
--- a source above "relayed": a light death is second-hand by definition.
-local function sourceFor(heavy, source)
+-- The source a death is stored with. A heavy (first-hand) death can have any
+-- source. A light death is second-hand, "relayed", except the one a victim
+-- reported himself that nothing else backs (R48): light, "self", no relayer.
+local function sourceFor(heavy, source, via)
   if heavy and SOURCE_RANK[source] then
     return source
+  end
+  if not heavy and source == "self" and via == nil then
+    return "self"
   end
   return "relayed"
 end
@@ -405,9 +409,11 @@ end
 -- one (heard from others); a light one never replaces a heavy one. The source
 -- ("self", "observed" or "relayed") is kept with the death so that it survives
 -- a reload; when the same death is added again the stronger source is kept
--- (observed over self over relayed). Returns true, or nil and "bad_record",
--- "future" (dated ahead of now, the receiver's clock; leave it out and the date
--- is not checked) or "readonly".
+-- (observed over self over relayed). A victim's own report that nothing else
+-- backs is light with source "self" and no via (R48): direct, so outside the
+-- relay caps, worth W_ONE_SIDED, and never clearing New. Returns true, or nil
+-- and "bad_record", "future" (dated ahead of now, the receiver's clock; leave
+-- it out and the date is not checked) or "readonly".
 function M.addDeath(db, d, now)
   if db._newer then
     return nil, "readonly"
@@ -442,7 +448,7 @@ function M.addDeath(db, d, now)
     id = d.id,
     ts = d.ts,
     heavy = heavy,
-    source = sourceFor(heavy, d.source),
+    source = sourceFor(heavy, d.source, via),
     via = via,
   }
 
@@ -527,7 +533,9 @@ function M.addReceipt(db, warlock, id, ts, now)
     receipts = {}
     db.receipts[name] = receipts
   end
-  receipts[id] = ts
+  if receipts[id] == nil then
+    receipts[id] = ts -- hearing the same arrival again keeps its first time
+  end
   return true
 end
 
@@ -643,7 +651,9 @@ end
 --     newest, at W_TWO_SIDED; the rest weigh nothing (but are kept);
 --   * a relayed rating or light death with relayers weighs what weighRelayed
 --     leaves it; a light death nobody relayed (seen first hand) weighs
---     W_RELAYED; a heavy death weighs W_DEATH.
+--     W_RELAYED, or W_ONE_SIDED when it is the victim's own unproven report
+--     (source "self", R48; direct, so outside the relay caps); a heavy death
+--     weighs W_DEATH.
 -- Ignored records do not count anywhere: those of a liar, those whose relayers
 -- are all struck or liars, and malformed rows. Reading creates nothing.
 function M.summary(db, target, kind)
@@ -726,7 +736,10 @@ function M.summary(db, target, kind)
             entries[#entries + 1] = e
             relayed[#relayed + 1] = e
           else
-            entries[#entries + 1] = { stars = 1, weight = C.W_RELAYED }
+            -- Seen first hand but not heavy: the victim's own unproven report
+            -- (R48) is direct and weighs like a one-sided rating; any other
+            -- death nobody relayed weighs what a relayed one does.
+            entries[#entries + 1] = { stars = 1, weight = d.source == "self" and C.W_ONE_SIDED or C.W_RELAYED }
           end
           deaths = deaths + 1
           seen(id)

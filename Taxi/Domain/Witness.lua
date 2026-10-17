@@ -4,17 +4,25 @@ local _, ns = ...
 -- it back when the traveler turns out to be alive.
 --
 -- On Hardcore a death soon after a summon is the heaviest thing that can count
--- against a warlock, so only first-hand evidence is heavy:
+-- against a warlock, so only corroborated evidence is heavy (R48):
 --   * a death this client saw itself (server death data, or its own death),
 --     on a ride whose arrival it heard from the traveler;
---   * the traveler's own report, on a ride whose start it heard from them.
--- A report from anyone else is a relayed (light) one: it is worth little, and
--- its relayer is struck if the "dead" traveler is seen alive.
+--   * the traveler's own report, on a ride whose start it heard from them, when
+--     this client also has the warlock's ride log naming that traveler (or saw
+--     the death itself). A silent throwaway identity can announce a ride and
+--     report a death, but cannot make the warlock log a ride it never gave.
+-- A report from the traveler that nothing else backs is a light death with
+-- source "self": direct (no relayer), worth no more than a one-sided rating,
+-- and counted in deathsReported so travelers still see the warning. It becomes
+-- heavy when the warlock's ride log (corroborate) or this client's own sighting
+-- turns up. A report from anyone else is a relayed (light) one: it is worth
+-- little, and its relayer is struck if the "dead" traveler is seen alive.
 -- A traveler who reports their own death and is then seen alive is a liar.
 --
 -- A Hardcore character dies once, so a traveler has at most one heavy death on
--- file; further first-hand claims from the same name are refused, which stops
--- one silent identity from minting a heavy death per invented ride.
+-- file and at most one unproven self report; further first-hand claims from the
+-- same name are refused, which stops one silent identity from minting a death
+-- per invented ride.
 --
 -- Rides are only ever learned from the traveler (the sender must be the
 -- traveler), so nobody can start a ride for someone else, and a traveler has at
@@ -77,6 +85,7 @@ end
 --   ridesOf[victim]  = { [rideId] = ride }            the open rides of a traveler
 --   deathsOf[victim] = { [key] = {target, id} }       every death on file naming a victim
 --   heavyOf[victim]  = {target, id, ts}               the victim's one heavy death
+--   claimOf[victim]  = {target, id, ts}               the victim's one unproven self report
 -- They are only a way to find things quickly: what they point at is checked
 -- against the db and the rides before it is used.
 
@@ -84,20 +93,42 @@ local function deathKey(target, id)
   return target .. "\0" .. id
 end
 
--- Note a death on file (a heavy one also becomes the victim's heavy death, when
--- they have none; with several the earliest is the one).
-local function track(w, victim, target, id, heavy, ts)
+-- What a death on file is for the one-per-victim rules: "heavy", "claim" (the
+-- victim's own report that nothing backs: light, source "self", no relayer) or
+-- nil (a relayed death, which is not limited).
+local function kindOf(death)
+  if death.heavy == true then
+    return "heavy"
+  end
+  if death.source == "self" and death.via == nil then
+    return "claim"
+  end
+  return nil
+end
+
+-- Note a death on file. A heavy one also becomes the victim's heavy death, when
+-- they have none, and an unproven self report their claim; with several the
+-- earliest is the one.
+local function track(w, victim, target, id, kind, ts)
   local byKey = w.deathsOf[victim]
   if byKey == nil then
     byKey = {}
     w.deathsOf[victim] = byKey
   end
   byKey[deathKey(target, id)] = { target = target, id = id }
-  if heavy then
-    local h = w.heavyOf[victim]
+  local index = (kind == "heavy" and w.heavyOf) or (kind == "claim" and w.claimOf) or nil
+  if index ~= nil then
+    local h = index[victim]
     local when = finite(ts) and ts or math.huge
     if h == nil or when < h.ts or (when == h.ts and deathKey(target, id) < deathKey(h.target, h.id)) then
-      w.heavyOf[victim] = { target = target, id = id, ts = when }
+      index[victim] = { target = target, id = id, ts = when }
+    end
+  end
+  if kind == "heavy" then
+    -- A claim made heavy by proof is no claim any more.
+    local c = w.claimOf[victim]
+    if c ~= nil and c.target == target and c.id == id then
+      w.claimOf[victim] = nil
     end
   end
 end
@@ -111,9 +142,11 @@ local function untrack(w, victim, target, id)
       w.deathsOf[victim] = nil
     end
   end
-  local h = w.heavyOf[victim]
-  if h ~= nil and h.target == target and h.id == id then
-    w.heavyOf[victim] = nil
+  for _, index in ipairs({ w.heavyOf, w.claimOf }) do
+    local h = index[victim]
+    if h ~= nil and h.target == target and h.id == id then
+      index[victim] = nil
+    end
   end
 end
 
@@ -125,7 +158,7 @@ local function indexDb(w)
         if type(id) == "string" and type(death) == "table" then
           local victim = nameOf(death.victim)
           if victim ~= nil then
-            track(w, victim, target, id, death.heavy == true, death.ts)
+            track(w, victim, target, id, kindOf(death), death.ts)
           end
         end
       end
@@ -164,13 +197,57 @@ local function heavyAllowed(w, victim, warlock, rideId)
   return h == nil or (Names.same(h.target, warlock) and h.id == rideId)
 end
 
+-- The victim's unproven self report on file, as {target, id}, or nil. An entry
+-- that is no longer such a report of theirs in the db is forgotten.
+local function claimDeathOf(w, victim)
+  local c = w.claimOf[victim]
+  if c ~= nil then
+    local death = storedDeath(w, c.target, c.id)
+    if death == nil or kindOf(death) ~= "claim" or not Names.same(death.victim, victim) then
+      w.claimOf[victim] = nil
+      return nil
+    end
+  end
+  return c
+end
+
+-- True when an unproven self report of victim on this warlock's ride may be
+-- added: no heavy death on another ride, and no other unproven report.
+local function claimAllowed(w, victim, warlock, rideId)
+  if not heavyAllowed(w, victim, warlock, rideId) then
+    return false
+  end
+  local c = claimDeathOf(w, victim)
+  return c == nil or (Names.same(c.target, warlock) and c.id == rideId)
+end
+
+-- True when the warlock's own ride log for rideId names victim as the traveler.
+local function logNames(w, warlock, rideId, victim)
+  local logs = type(w.db.rideLogs) == "table" and w.db.rideLogs[warlock] or nil
+  local log = type(logs) == "table" and logs[rideId] or nil
+  return type(log) == "table" and Names.same(log.traveler, victim)
+end
+
+-- True when a victim's report of a death on this ride has something behind it:
+-- the warlock's ride log names the victim, or this client holds the death as a
+-- heavy one already (it saw it happen).
+local function backed(w, warlock, rideId, victim)
+  if logNames(w, warlock, rideId, victim) then
+    return true
+  end
+  local death = storedDeath(w, warlock, rideId)
+  return death ~= nil and death.heavy == true and Names.same(death.victim, victim)
+end
+
 -- Store a death through Ratings and keep the indexes in step. Returns whether
 -- it was stored.
 local function store(w, death, now)
   if not Ratings.addDeath(w.db, death, now) then
     return false
   end
-  track(w, death.victim, death.target, death.id, death.heavy, death.ts)
+  -- What is on file now: a heavy death is not lowered by a light report of it.
+  local stored = storedDeath(w, death.target, death.id) or death
+  track(w, death.victim, death.target, death.id, kindOf(stored), stored.ts)
   return true
 end
 
@@ -193,7 +270,7 @@ end
 
 -- db: the TaxiDB table, where deaths, liars and strikes are kept.
 function M.new(db)
-  local w = setmetatable({ db = db, rides = {}, ridesOf = {}, deathsOf = {}, heavyOf = {} }, Witness)
+  local w = setmetatable({ db = db, rides = {}, ridesOf = {}, deathsOf = {}, heavyOf = {}, claimOf = {} }, Witness)
   indexDb(w)
   return w
 end
@@ -320,12 +397,17 @@ end
 -- DEATH_WINDOW (plus a little for transport) after it, whatever secs says.
 -- m.source is the sender's say-so and is not used.
 --   * From the victim, on a ride whose start the victim announced and that
---     names the same warlock: a heavy death, source "self". A victim has one
---     heavy death at most; a claim on another ride is refused.
+--     names the same warlock, and which has something behind it (R48): this
+--     client has the warlock's ride log naming the victim, or saw the death
+--     itself. That is a heavy death, source "self". A victim has one heavy death
+--     at most; a claim on another ride is refused.
+--   * From the victim, with nothing behind it: a light death, source "self",
+--     no relayer. A victim has one such claim at most, and none while he has a
+--     heavy death on another ride.
 --   * From anyone else: a light death, source "relayed", via = {[sender] = true}.
 -- Returns the death, or nil when the message is malformed, outside the window,
 -- contradicts a known ride, is the victim's own claim about a ride that was
--- never announced or a second heavy death, or could not be stored.
+-- never announced or a second claim, or could not be stored.
 function Witness:deathReported(m, sender, ts)
   if type(m) ~= "table" then
     return nil
@@ -348,10 +430,21 @@ function Witness:deathReported(m, sender, ts)
 
   local death = { target = warlock, victim = victim, id = rideId, ts = ts }
   if Names.same(from, victim) then
-    if ride == nil or not heavyAllowed(self, victim, warlock, rideId) then
+    if ride == nil then
       return nil
     end
-    death.heavy, death.source = true, "self"
+    if backed(self, warlock, rideId, victim) then
+      if not heavyAllowed(self, victim, warlock, rideId) then
+        return nil
+      end
+      death.heavy = true
+    else
+      if not claimAllowed(self, victim, warlock, rideId) then
+        return nil
+      end
+      death.heavy = false
+    end
+    death.source = "self"
   else
     death.heavy, death.source, death.via = false, "relayed", { [from] = true }
   end
@@ -359,6 +452,31 @@ function Witness:deathReported(m, sender, ts)
     return nil
   end
   return death
+end
+
+-- The warlock's ride log for rideId has arrived (RIDE_LOG, or a ride log in a
+-- query reply): if this client holds the named victim's unproven self report of
+-- a death on that ride, the log backs it and the death becomes heavy (R48).
+-- The victim's one heavy death still applies. Returns the death as it is now
+-- stored, or nil when there was nothing to make heavy.
+function Witness:corroborate(warlock, rideId, now)
+  local target = nameOf(warlock)
+  if target == nil or not nonEmptyString(rideId) or not finite(now) then
+    return nil
+  end
+  local death = storedDeath(self, target, rideId)
+  if death == nil or kindOf(death) ~= "claim" then
+    return nil
+  end
+  local victim = nameOf(death.victim)
+  if victim == nil or not logNames(self, target, rideId, victim) or not heavyAllowed(self, victim, target, rideId) then
+    return nil
+  end
+  local proven = { target = target, victim = victim, id = rideId, ts = death.ts, heavy = true, source = "self" }
+  if not store(self, proven, now) then
+    return nil
+  end
+  return proven
 end
 
 -- A death heard in someone's reply to a query, not in a DEATH message: rec =
@@ -403,8 +521,8 @@ end
 
 -- name was seen alive (they sent something) at time ts. Every stored death of
 -- theirs older than ALIVE_GRACE seconds is then proved false:
---   * the player's own report (heavy, stored source "self"): they lied, so they
---     are marked a liar and the death is removed;
+--   * the player's own report (stored source "self", heavy or an unproven light
+--     one, R48): they lied, so they are marked a liar and the death is removed;
 --   * a relayed report (light): each relayer gets a strike and the death is
 --     removed;
 --   * a death this client saw for itself (source "observed") is never removed,
@@ -444,7 +562,7 @@ function Witness:aliveEvidence(name, ts)
   for _, s in ipairs(stale) do
     local death = s.death
     local refuted = false
-    if death.heavy == true then
+    if death.heavy == true or kindOf(death) == "claim" then
       if death.source == "self" then
         Ratings.markLiar(db, who, ts)
         refuted = true

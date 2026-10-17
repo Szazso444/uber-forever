@@ -353,8 +353,61 @@ describe("Reputation sync", function()
       assert.are.same({}, ofType(wire("Sof Tee"), "DEATH"))
     end)
 
+    local function died(p, secs)
+      hear(p, "Vic Tim", "DEATH", {rideId = id, victim = "Vic Tim", warlock = "Dar Kbolt", secs = secs or 5, source = "self"})
+    end
+
+    it("a victim's own DEATH is a light death with source self until the warlock's RIDE_LOG backs it (R48)", function()
+      hear(b, "Vic Tim", "RIDE_START", {rideId = id, warlock = "Dar Kbolt"})
+      died(b)
+      local d = b.engine.db.deaths["Dar Kbolt"][id]
+      assert.are.same({false, "self", nil}, {d.heavy, d.source, d.via})
+      assert.is_true(b.engine.dirty)
+      b.engine.dirty = false
+      -- A log that does not name the ride's traveler is refused: nothing changes.
+      hear(b, "Dar Kbolt", "RIDE_LOG", {rideId = id, traveler = "Mal Ory"})
+      assert.is_false(b.engine.db.deaths["Dar Kbolt"][id].heavy)
+      -- The warlock's log naming the victim backs the report: the death is heavy now.
+      hear(b, "Dar Kbolt", "RIDE_LOG", {rideId = id, traveler = "Vic Tim"})
+      d = b.engine.db.deaths["Dar Kbolt"][id]
+      assert.are.same({true, "self"}, {d.heavy, d.source})
+      assert.is_true(b.engine.dirty)
+      assert.are.equal(1, b.engine:summary("Dar Kbolt", "trust").deathsReported)
+    end)
+
+    it("a DEATH that follows the warlock's RIDE_LOG is heavy at once (R48)", function()
+      hear(b, "Vic Tim", "RIDE_START", {rideId = id, warlock = "Dar Kbolt"})
+      hear(b, "Dar Kbolt", "RIDE_LOG", {rideId = id, traveler = "Vic Tim"})
+      died(b)
+      assert.are.same({true, "self"}, {b.engine.db.deaths["Dar Kbolt"][id].heavy, b.engine.db.deaths["Dar Kbolt"][id].source})
+    end)
+
+    it("a ride log in the warlock's own query reply backs the death too (R48)", function()
+      hear(b, "Vic Tim", "RIDE_START", {rideId = id, warlock = "Dar Kbolt"})
+      died(b)
+      assert.is_true(b.engine:query("Dar Kbolt"))
+      hear(b, "Bo Lee", "QUERY_R", {target = "Dar Kbolt", records = {
+        {kind = "ridelog", rater = "Bo Lee", id = id, ts = now(), other = "Vic Tim"},   -- not the warlock's own
+      }}, "WHISPER")
+      assert.is_false(b.engine.db.deaths["Dar Kbolt"][id].heavy)
+      hear(b, "Dar Kbolt", "QUERY_R", {target = "Dar Kbolt", records = {
+        {kind = "ridelog", rater = "Dar Kbolt", id = id, ts = now(), other = "Vic Tim"},
+      }}, "WHISPER")
+      assert.is_true(b.engine.db.deaths["Dar Kbolt"][id].heavy)
+    end)
+
+    it("a victim's own report is never heavy by itself: a silent throwaway identity moves the score by W_ONE_SIDED (R48)", function()
+      hear(b, "Vic Tim", "RIDE_START", {rideId = id, warlock = "Dar Kbolt"})
+      died(b)
+      local s = b.engine:summary("Dar Kbolt", "trust")
+      assert.are.equal(1, s.deathsReported)
+      assert.is_true(s.isNew)
+      assert.is_true(math.abs(s.score - (5 * 3.5 + 0.3) / (5 + 0.3)) < 1e-9)
+    end)
+
     it("a DEATH message is not proof of life; any other message is (R37)", function()
       hear(b, "Vic Tim", "RIDE_START", {rideId = id, warlock = "Dar Kbolt"})
+      hear(b, "Dar Kbolt", "RIDE_LOG", {rideId = id, traveler = "Vic Tim"})
       hear(b, "Vic Tim", "DEATH", {rideId = id, victim = "Vic Tim", warlock = "Dar Kbolt", secs = 5, source = "self"})
       assert.is_true(b.engine.db.deaths["Dar Kbolt"][id].heavy)
       w:advance(ns.Config.ALIVE_GRACE + 1)
