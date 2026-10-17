@@ -25,6 +25,11 @@ M.GUARD_CHANGED_BAD = "Stand moved after you requested"
 M.GUARD_TRUST_OK = "Trust rating OK"
 M.GUARD_TRUST_BAD = "Low or new Trust rating"
 
+-- Engine status lines (App/Engine.lua), shown with STATUS events.
+M.STATUS_CHANNEL_FULL = "Taxi needs a free chat channel. Leave one (e.g. /leave 5) and /reload."
+M.STATUS_LOCKDOWN = "Paused (instance)"
+M.STATUS_UPDATE = "A newer Taxi version is in use. Please update."
+
 function M.fmt(key, ...)
   return string.format(M[key], ...)
 end

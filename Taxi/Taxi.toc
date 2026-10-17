@@ -21,5 +21,9 @@ Domain\Witness.lua
 Domain\Ledger.lua
 Comms\Protocol.lua
 Comms\Transport.lua
+App\Engine.lua
+App\Reputation.lua
 Sim\Clock.lua
 Sim\Bus.lua
+Sim\World.lua
+Sim\FakeGame.lua
