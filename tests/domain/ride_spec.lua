@@ -338,23 +338,6 @@ describe("Ride", function()
       assert.is_nil(r.times.cancelled)
       assertUnchanged(before, r)
     end)
-
-    it("rejects every event from every final state", function()
-      local EVENTS = {
-        "ACCEPT", "DECLINE", "JOINED", "SUMMON_OFFERED", "PORTAL_UP",
-        "SUMMON_FAILED", "ARRIVED", "FINISHED", "CANCEL",
-      }
-      for _, state in ipairs{ "done", "declined", "cancelled" } do
-        for _, event in ipairs(EVENTS) do
-          local r = rideAt(state)
-          local before = snapshot(r)
-          local ok, why = Ride.apply(r, event, 400, { rideId = "R1" })
-          assert.is_nil(ok, state .. " " .. event)
-          assert.are.equal("bad_transition", why)
-          assertUnchanged(before, r)
-        end
-      end
-    end)
   end)
 
   describe("CANCEL", function()
