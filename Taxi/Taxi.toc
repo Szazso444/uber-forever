@@ -1,0 +1,10 @@
+## Interface: 16001
+## Title: Taxi
+## Notes: Trust-based summon and portal board for WoW Forever
+## SavedVariables: TaxiDB
+## SavedVariablesPerCharacter: TaxiCharDB
+
+Core\Config.lua
+Core\Locale.lua
+Core\Callbacks.lua
+Domain\Util.lua
