@@ -436,13 +436,13 @@ Engine.declineRequest = Engine.action(function(e, key, reason)
   return true
 end)
 
--- The traveler the "Summon next" (or "Open portal") button is for: the first
--- ride in accept order whose traveler is in my group and not yet there. A ride
--- stays first until it arrives or ends. PORTAL_UP goes to the group, so the
--- clickers (or a mage's travelers) know to click. Returns the name, or nil
--- when nobody is waiting.
-Engine.nextTraveler = Engine.action(function(e)
-  local stand = e.stand
+-- The ride the "Summon next" (or "Open portal") button is for: the first ride
+-- in accept order whose traveler is in my group and not yet there. A ride stays
+-- first until it arrives or ends. Sends nothing, so the UI can ask on every
+-- refresh to aim its secure button (only rides that ended are dropped from the
+-- queue). Returns the ride, or nil when nobody is waiting.
+function Engine:nextRide()
+  local stand = self.stand
   if stand == nil then
     return nil
   end
@@ -455,11 +455,22 @@ Engine.nextTraveler = Engine.action(function(e)
   end
   for _, ride in ipairs(queue) do
     if ride.state == "grouped" then
-      e:send("PORTAL_UP", { dest = ride.dest }, e:groupDist())
-      return ride.traveler
+      return ride
     end
   end
   return nil
+end
+
+-- The traveler nextRide names, for the player's click on that button.
+-- PORTAL_UP goes to the group, so the clickers (or a mage's travelers) know to
+-- click. Returns the name, or nil when nobody is waiting.
+Engine.nextTraveler = Engine.action(function(e)
+  local ride = e:nextRide()
+  if ride == nil then
+    return nil
+  end
+  e:send("PORTAL_UP", { dest = ride.dest }, e:groupDist())
+  return ride.traveler
 end)
 
 -- Group changes: an accepted traveler who joined is grouped; a seated

@@ -505,6 +505,22 @@ describe("Driver", function()
     assert.are.equal("Tre Two", lock.engine:nextTraveler())
   end)
 
+  it("nextRide names the ride the Summon next button is for and sends nothing", function()
+    local s = lock.engine:openStand{kind = "lock"}; w:advance(1)
+    assert.is_nil(lock.engine:nextRide())
+    t.engine:requestRide(s.standId, 0); w:advance(2)
+    lock.engine:acceptRequest("Tra Veler#" .. s.standId); w:advance(2)
+    assert.is_nil(lock.engine:nextRide()) -- accepted, not in the group yet
+    assert.is_true(w:acceptInvite("Tra Veler")); w:advance(1)
+    local ride = lock.engine.rides["Tra Veler#" .. s.standId]
+    assert.are.equal(ride, lock.engine:nextRide())
+    assert.are.equal(ride, lock.engine:nextRide()) -- asking again changes nothing
+    w:advance(1)
+    assert.are.same({}, wireOf(ns, w, "PORTAL_UP", "Dar Kbolt"))
+    assert.are.equal("Tra Veler", lock.engine:nextTraveler()); w:advance(1) -- the click itself tells the group
+    assert.are.equal(1, #wireOf(ns, w, "PORTAL_UP", "Dar Kbolt"))
+  end)
+
   it("files a TIP only from the ride's traveler, and counts an early one once the ride arrives (R39)", function()
     add("Cee One", {place = "gadgetzan"})
     local s = lock.engine:openStand{kind = "lock"}; w:advance(1)
