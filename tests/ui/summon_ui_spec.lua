@@ -390,6 +390,81 @@ describe("summon windows", function()
       assert.are.same({ "trust", "Dar Kbolt", 5, ride.rideId }, { sent[1].kind, sent[1].target, sent[1].stars, sent[1].id })
     end)
 
+    describe("the Put button (R64)", function()
+      -- As Forever: the money can't be confirmed, so the window keeps its hint.
+      local function forever()
+        t.me.game.trySetTradeMoney = function(game, copper)
+          game.p.tradeMoney = copper
+          game.setCalls = (game.setCalls or 0) + 1
+          return false
+        end
+      end
+
+      local function put(text)
+        return ui:one{ kind = "Button", text = text or "Put 1g in the trade" }
+      end
+
+      it("is there once Open trade was pressed, not before", function()
+        forever()
+        arrive(10000)
+        assert.are.equal(0, #ui:find{ kind = "Button", text = "Put 1g in the trade" })
+        ui:press("Open trade with Dar Kbolt")
+        assert.is_true(ui:visible(put()))
+        assert.is_true(ui:shows("Put 1g in the trade")) -- and the hint, as before
+      end)
+
+      it("is disabled with no trade open and enabled while the trade with the driver is open", function()
+        forever()
+        arrive(10000)
+        ui:press("Open trade with Dar Kbolt") -- the simulated game has the window open at once
+        local button = put()
+        assert.is_true(button.enabled)
+        t.me.tradeWith = nil -- the window closed
+        ui:update(1)
+        assert.is_false(button.enabled)
+        t.me.tradeWith = "Cee One" -- a trade, but not with the driver
+        ui:update(1)
+        assert.is_false(button.enabled)
+        t.me.tradeWith = "Dar Kbolt"
+        ui:update(1)
+        assert.is_true(button.enabled)
+      end)
+
+      it("calls trySetTradeMoney with the tip picked now, and keeps the hint", function()
+        forever()
+        arrive(10000)
+        ui:press("Open trade with Dar Kbolt")
+        t.me.game.setCalls = 0
+        ui:click(put())
+        assert.are.same({ 1, 10000 }, { t.me.game.setCalls, t.me.tradeMoney })
+        ui:press("50s") -- another amount picked: the button and the hint follow it
+        assert.is_false(ui:shows("Put 1g in the trade"))
+        ui:click(put("Put 50s in the trade"))
+        assert.are.same({ 2, 5000 }, { t.me.game.setCalls, t.me.tradeMoney })
+        assert.is_true(ui:shows("Put 50s in the trade"))
+        assert.is_false(ui:shows("is in the trade"))
+      end)
+
+      it("refuses a click that has no trade open or no tip, and says why", function()
+        forever()
+        arrive(10000)
+        ui:press("Open trade with Dar Kbolt")
+        local button = put()
+        t.me.tradeWith = nil
+        t.me.game.setCalls = 0
+        button.scripts.OnClick(button) -- a click that got through before the poll disabled it
+        assert.are.equal(0, t.me.game.setCalls)
+        assert.is_true(ui:shows("No trade window with that player is open."))
+      end)
+
+      it("is not offered when the game could put the money in itself", function()
+        arrive(10000)
+        ui:press("Open trade with Dar Kbolt")
+        assert.is_true(ui:shows("1g is in the trade. Check it and accept."))
+        assert.are.equal(0, #ui:find{ kind = "Button", text = "Put 1g in the trade" })
+      end)
+    end)
+
     it("says the money is in the trade when the game could put it there", function()
       arrive(10000)
       ui:press("Open trade with Dar Kbolt")

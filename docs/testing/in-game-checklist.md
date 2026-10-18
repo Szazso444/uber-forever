@@ -43,7 +43,7 @@ How the file is laid out:
   `LANDING_WINDOW`, `JUMP_YARDS`, `CREW_YARDS` in `Taxi/App/Traveler.lua`;
   `INVITE_TIMEOUT`, `RAID_TIMEOUT` in `Taxi/App/Driver.lua`; `PUMP_INTERVAL`
   in `Taxi/App/Engine.lua`; `POLL_SECONDS`, `MOVE_YARDS`,
-  `TRADE_SETTLE_SECONDS`, `TIP_HOLD_SECONDS` in `Taxi/Game/WoW.lua`; and in
+  `TRADE_SETTLE_SECONDS` in `Taxi/Game/WoW.lua`; and in
   `Taxi/Core/Config.lua` `STAND_MOVE_YARDS`, `GUARD_YARDS`, `PORTALS`,
   `RITUAL_SPELL`, `SOUL_SHARD_ITEM`.
 - Two helpers (paste once per character per session):
@@ -92,8 +92,10 @@ next to the real popup; the sim's panels say "(sim)".)
 - [ ] Offer stranger summon: YELLOW "Not a Taxi ride" with no ride; RED
       "Summoner: Stan Ger (agreed: Dar Kbolt)" during one.
 - [ ] Accept summon: the panel goes, the arrival window opens with 1g picked.
-- [ ] Stars (Trust), Open trade with Dar Kbolt: "Put 1g in the trade" shows,
-      "Rating sent." too; opening the trade again sends no second rating.
+- [ ] Stars (Trust), Open trade with Dar Kbolt: "Put 1g in the trade" shows
+      (as a hint and as a Put button, enabled while the simulated trade is
+      open; clicking it keeps the hint), "Rating sent." too; opening the trade
+      again sends no second rating.
 - [ ] Trade tip completes the trade; History shows "Summon from Dar Kbolt".
 - [ ] Stay and click applies to his stand; Leave group leaves it.
 
@@ -560,25 +562,27 @@ questions 2 and 3 (steps G6 and G8). Do it on a normal ruleset first.
 
 ### I. Trade, tips and payouts (needs a completed ride; Forever's Hardcore trade rules are in I8)
 
-- [ ] **I1. Open trade, and the tip going in (R63).** Needs: T still in W's
+- [ ] **I1. Open trade, and the Put button (R64).** Needs: T still in W's
       group and within trade range. Do: T presses Open trade with W in the
       arrival window (1g picked); W accepts the trade request; T watches the
-      gold field as the trade window opens. Expect: the trade window opens and
-      T's arrival window says "Put 1g in the trade" (Taxi cannot read the
-      amount back, so this line is always shown). Taxi tries
-      `C_TradeInfo.SetTradeMoney` the moment the window opens (up to 10
-      seconds after the press), so the 1g may already be in the window: record
-      whether it is, and whether an "action blocked" popup appeared. That call
-      is made from the game's `TRADE_SHOW` event, not from a click; if the game
-      blocks it there, report it: the call would have to move. T must not press
-      Leave group first: Taxi only opens a trade with a group member
-      (otherwise "The game would not open a trade.").
-- [ ] **I2. `SetTradeMoney` from a click (spec §16.4).** Needs: the trade
-      window open (I1). Do: T empties the gold field and presses Open trade
-      again, and watches it. Expect and record: whether the click puts the gold
-      in, and whether an "action blocked" popup appears. If the gold goes in
-      from the click but not in I1, the call belongs in the click only. Also
-      run `/run print(GetPlayerTradeMoney)`: a `function` means the old getter
+      window as the trade window opens. Expect: T's arrival window shows the
+      hint "Put 1g in the trade" and, under it, a button "Put 1g in the trade"
+      that is greyed out until the trade window with W is open and enabled
+      once it is (it may take up to half a second to switch). No "action
+      blocked" popup. Taxi never sets the money by itself: it is only tried by
+      the click in I2. T must not press Leave group first: Taxi only opens a
+      trade with a group member (otherwise "The game would not open a
+      trade.").
+- [ ] **I2. `SetTradeMoney` from the Put button click (spec §16.4).** Needs:
+      the trade window open (I1). Do: T clicks the Put button, then looks at
+      the gold field in the trade window; then T picks another tip amount (the
+      button and the hint change to it), empties the gold field and clicks the
+      button again. Expect and record: whether the click puts the gold in the
+      trade window, and whether an "action blocked" popup appears. The hint
+      "Put 1g in the trade" stays either way (Taxi cannot read the amount
+      back), so check the gold yourself before accepting the trade. Closing the
+      trade window greys the button out again. Also run
+      `/run print(GetPlayerTradeMoney)`: a `function` means the old getter
       exists in Forever and Taxi could read the amount back (that needs a
       decision, it is not in the API docs); `nil` means it does not.
 - [ ] **I3. The trade partner is "NPC".** Do: with the trade window open,

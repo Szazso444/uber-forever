@@ -588,6 +588,35 @@ Engine.submitArrival = Engine.action(function(e, rideId, stars, tip)
   return true, e.game:trySetTradeMoney(tip) == true
 end)
 
+-- Whether a trade window with this ride's driver is open now: the arrival
+-- window's Put button is enabled only then.
+function Engine:tradeOpenWithDriver(rideId)
+  local ride = rideById(self, rideId)
+  return ride ~= nil and self.game:tradeOpenWith(ride.driver) == true
+end
+
+-- Tries to put a tip in the open trade window with the driver, for the Put
+-- button (the player's own click, R64). Returns true and whether the game could
+-- put it there, or nil and "unknown_ride", "not_arrived", "zero" / "too_much"
+-- (Money.validateTip) or "no_window" (no trade window with the driver is open).
+Engine.putTipInTrade = Engine.action(function(e, rideId, tip)
+  local ride = rideById(e, rideId)
+  if ride == nil then
+    return nil, "unknown_ride"
+  end
+  if ride.state ~= "arrived" and ride.state ~= "done" then
+    return nil, "not_arrived"
+  end
+  local ok, why = Money.validateTip(tip, e.game:money())
+  if not ok then
+    return nil, why
+  end
+  if not e.game:tradeOpenWith(ride.driver) then
+    return nil, "no_window"
+  end
+  return true, e.game:trySetTradeMoney(tip) == true
+end)
+
 -- The latest of my arrived rides with this driver.
 local function arrivedWith(e, driver)
   local best

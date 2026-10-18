@@ -112,8 +112,10 @@ local function buildWorld(s)
   s.cee1 = add(CEE1, "PRIEST", 55, "gadgetzan")
   s.cee2 = add(CEE2, "ROGUE", 55, "gadgetzan")
   s.stan = add(STAN, "WARLOCK", 60, "searing")
-  -- Forever can't put gold in a trade window from an addon; the sim says so too,
-  -- so the arrival window shows "Put 1g in the trade" here as it will in the game.
+  -- Whether an addon can put gold in a trade window in Forever is not known, and
+  -- it could not tell whether it did; the sim answers "can't tell" too, so the
+  -- arrival window shows "Put 1g in the trade" (with its Put button) here as it
+  -- will in the game.
   function s.you.game:trySetTradeMoney(copper)
     self.p.tradeMoney = copper
     return false

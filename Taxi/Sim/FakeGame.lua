@@ -10,7 +10,8 @@ local _, ns = ...
 --              unitInCombat(unit), unitDead(unit), groupNames, groupSize, isRaid,
 --              invite(name), convertToRaid, leaveGroup
 --   summon     summonFacts -> {summoner, areaName} | nil, cancelSummon
---   money      money, openTrade(name), trySetTradeMoney(copper) -> bool
+--   money      money, openTrade(name), tradeOpenWith(name) -> bool,
+--              trySetTradeMoney(copper) -> bool
 --   other      isGuildmate(name), knownPortals -> {{spellId, key}}, soulShards,
 --              joinChannel(name) -> true | nil, "full"
 -- Anything unknown is nil, never a stand-in like 0 or "" (R21).
@@ -275,6 +276,12 @@ function Game:openTrade(name)
   end
   self.p.tradeWith = name
   return true
+end
+
+-- The simulated trade window is open from openTrade on, until the player's
+-- trade is done (UI/SimControls.lua clears tradeWith).
+function Game:tradeOpenWith(name)
+  return type(name) == "string" and self.p.tradeWith == name
 end
 
 function Game:trySetTradeMoney(copper)

@@ -77,7 +77,7 @@ describe("UI strings", function()
       "unknown_ride", "full", "needs_raid", "no_trade", "unknown_clicker", "no_stand", "is_owner", "not_in_group",
       "already_crew", "seated", "own_stand", "mage", "on_shift", "over_share", "no_offer", "not_on_shift",
       -- the arrival and shift-end windows
-      "zero", "too_much", "not_arrived", "bad_stars", "no_rating_for_portals", "unknown_shift",
+      "zero", "too_much", "not_arrived", "bad_stars", "no_rating_for_portals", "unknown_shift", "no_window",
     }
     local missing = {}
     for _, code in ipairs(codes) do

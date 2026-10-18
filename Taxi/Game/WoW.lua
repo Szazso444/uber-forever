@@ -45,7 +45,7 @@ local Config, Names = ns.Config, ns.Names
 local POLL_SECONDS = 1 -- position and summon poll
 local MOVE_YARDS = 5 -- a poll that finds me farther than this from the last MOVED fires MOVED again
 local TRADE_SETTLE_SECONDS = 3 -- a completed trade's money must show up this soon after the window closed
-local TIP_HOLD_SECONDS = 10 -- a tip asked for before the trade window opens is put in it if the window opens this soon (R63)
+
 
 -- Enum.SendAddonMessageResult (ChatConstantsDocumentation): Forever's numbers
 -- are the very codes Transport reads (3 AddonMessageThrottle, 8 ChannelThrottle,
@@ -352,24 +352,28 @@ function Game:openTrade(name)
     return false
   end
   InitiateTrade(unit)
-  self.askedTrade = canonical(name)
   return true
 end
 
--- Tries to put copper in the trade, and returns false either way: Forever's API
--- has no getter to read the amount back, so success can't be known and the UI
--- always shows "Put X in the trade" (R55). With a window open it is tried at
--- once. Right after openTrade none is open (the other player has not answered
--- yet), so the amount is kept for the window of that same partner, if it opens
--- within TIP_HOLD_SECONDS (R63, in TRADE_SHOW below). SetTradeMoney is
--- restricted in Forever (HasRestrictions); whether the game lets either attempt
--- through is what the in-game checklist (I1, I2) looks at, and a refusal is
--- swallowed.
+-- Whether a trade window with this player is open now (TRADE_SHOW names the
+-- partner, TRADE_CLOSED ends it). The arrival window's Put button waits for it.
+function Game:tradeOpenWith(name)
+  local wanted = canonical(name)
+  return self.tradeOpen == true and self.tradePartner ~= nil and wanted ~= nil
+    and Names.same(self.tradePartner, wanted)
+end
+
+-- Tries to put copper in the open trade window, and returns false either way:
+-- Forever's API has no getter to read the amount back, so success can't be
+-- known and the UI always shows "Put X in the trade" (R55). SetTradeMoney is
+-- restricted in Forever (HasRestrictions), so this is called only from the
+-- player's own click (the arrival window's Put button), never from a game
+-- event (R64). Whether the game lets it through is what the in-game checklist
+-- (I1, I2) looks at; a refusal is swallowed, and with no window open nothing
+-- is tried.
 function Game:trySetTradeMoney(copper)
   if self.tradeOpen then
     pcall(C_TradeInfo.SetTradeMoney, copper)
-  elseif self.askedTrade ~= nil then
-    self.heldTip = { copper = copper, partner = self.askedTrade, at = GetTime() }
   end
   return false
 end
@@ -569,19 +573,8 @@ end
 EVENTS.TRADE_SHOW = function(g)
   g.tradeOpen = true
   local money = number(GetMoney())
-  local partner = fullName("NPC")
-  g.trade = money ~= nil and { partner = partner, money = money } or nil
-  -- A tip held since the player pressed Open trade (R63): put it in this window
-  -- if it is the same partner's and not too old. It is used once.
-  local held = g.heldTip
-  if held ~= nil then
-    if GetTime() - held.at > TIP_HOLD_SECONDS then
-      g.heldTip = nil
-    elseif partner ~= nil and Names.same(partner, held.partner) then
-      g.heldTip = nil
-      pcall(C_TradeInfo.SetTradeMoney, held.copper)
-    end
-  end
+  g.tradePartner = fullName("NPC")
+  g.trade = money ~= nil and { partner = g.tradePartner, money = money } or nil
 end
 
 EVENTS.UI_INFO_MESSAGE = function(g, _, message)
@@ -593,6 +586,7 @@ end
 
 EVENTS.TRADE_CLOSED = function(g)
   g.tradeOpen = false
+  g.tradePartner = nil
   local trade = g.trade
   if trade ~= nil and trade.closedAt == nil then
     trade.closedAt = GetTime()

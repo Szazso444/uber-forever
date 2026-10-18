@@ -12,11 +12,12 @@ local _, ns = ...
 -- Open trade is Engine:submitArrival, which sends the rating and opens the
 -- trade. Whether an addon may set the money in the trade window in Forever is
 -- not known: SetTradeMoney is restricted and has no way to read the amount
--- back (checklist I1, I2). Taxi tries (right after the window opens, R63) and
--- can't tell whether it worked, so the window always says "Put 1g in the
--- trade" and the player checks or types it; the Engine learns of the tip from
--- the finished trade, not from this window. A rating is sent once: opening the
--- trade again sends none.
+-- back (checklist I1, I2). It is therefore only tried from a click: the Put
+-- button ("Put 1g in the trade"), which is enabled while a trade window with
+-- the driver is open (R64). Taxi can't tell whether it worked, so the window
+-- also keeps its hint "Put 1g in the trade" and the player checks or types the
+-- amount; the Engine learns of the tip from the finished trade, not from this
+-- window. A rating is sent once: opening the trade again sends none.
 --
 -- A plain free-standing window (Widgets.window): it shows in combat, and the
 -- player closes it with its X.
@@ -28,6 +29,7 @@ local M = {}
 UI.ArrivalWindow = M
 
 local WIDTH = 360
+local POLL_SECONDS = 0.5 -- how often an open window checks whether the trade window opened
 
 local function explain(why)
   return UI.Main.explain(nil, why)
@@ -55,6 +57,10 @@ local function build(view, link)
   f.put:SetWidth(328)
   f.put:SetWordWrap(true)
   W.paint(f.put, W.COLOR.gold)
+  f.putBtn = W.button(f, L.fmt("ARRIVE_PUT_BUTTON", "?"), 240, function()
+    view:Put()
+  end)
+  f.putBtn:Hide()
   f.msg = W.text(f, "GameFontHighlightSmall")
   f.msg:SetWidth(328)
   f.msg:SetWordWrap(true)
@@ -66,6 +72,13 @@ local function build(view, link)
   end)
   f.leave = W.button(f, L.ARRIVE_LEAVE, 150, function()
     view:Leave()
+  end)
+  f:SetScript("OnUpdate", function(_, elapsed)
+    view.elapsed = (view.elapsed or 0) + elapsed
+    if view.elapsed >= POLL_SECONDS then
+      view.elapsed = 0
+      link.engine:safely("arrival window", view.PaintPut, view)
+    end
   end)
   return f
 end
@@ -98,6 +111,26 @@ local function newView(link)
     local canRate = ride.kind == "summon" and not state.rated and f.stars:GetValue() > 0
     W.setText(f.trade, tipping and L.fmt("ARRIVE_TRADE", ride.driver) or L.ARRIVE_SEND_RATING)
     f.trade:SetEnabled(not link:dead() and (tipping or canRate))
+    self:PaintPut()
+  end
+
+  -- The Put button, there once Open trade was pressed and the game could not
+  -- put the money in itself: it names the tip picked now (the hint above it
+  -- follows) and is enabled while a trade window with the driver is open.
+  function view:PaintPut()
+    local f, state = self.frame, self.state
+    if f == nil or state == nil then
+      return
+    end
+    local valid, tip = f.picker:Read()
+    local show = state.put == "need" and valid and tip ~= nil
+    f.putBtn:SetShown(show)
+    if show then
+      local money = Money.format(tip)
+      W.setText(f.putBtn, L.fmt("ARRIVE_PUT_BUTTON", money))
+      W.setText(f.put, L.fmt("ARRIVE_PUT", money))
+      f.putBtn:SetEnabled(not link:dead() and link.engine:tradeOpenWithDriver(state.ride.rideId))
+    end
   end
 
   -- Lays the window out for the ride on show (a portal ride has no stars).
@@ -133,6 +166,8 @@ local function newView(link)
     y = y + 62
     at(f.put, y)
     y = y + 34
+    at(f.putBtn, y)
+    y = y + 30
     at(f.msg, y)
     y = y + 34
     at(f.trade, y)
@@ -167,6 +202,7 @@ local function newView(link)
     f.picker:SetOffer(ride.offer) -- the tip I offered when I asked is picked already
     W.setText(f.put, "")
     W.setText(f.msg, "")
+    f.putBtn:Hide()
     self:Paint()
     f:Show()
   end
@@ -201,9 +237,33 @@ local function newView(link)
     end
     if tip ~= nil then
       local money = Money.format(tip)
+      state.put = second == true and "set" or "need"
       W.setText(f.put, second == true and L.fmt("ARRIVE_SET", money) or L.fmt("ARRIVE_PUT", money))
     end
     self:PaintTrade()
+  end
+
+  -- The Put button: the player's own click puts the tip picked now in the open
+  -- trade window with the driver. The game may refuse it; the hint stays.
+  function view:Put()
+    local f, state = self.frame, self.state
+    local valid, tip = f.picker:Read()
+    if not valid or tip == nil then
+      W.say(f.msg, explain("bad_offer"), W.COLOR.red)
+      return
+    end
+    local ok, second = link.engine:putTipInTrade(state.ride.rideId, tip)
+    if not ok then
+      W.say(f.msg, explain(second), W.COLOR.red)
+      self:PaintPut()
+      return
+    end
+    W.setText(f.msg, "")
+    if second == true then
+      state.put = "set"
+      W.setText(f.put, L.fmt("ARRIVE_SET", Money.format(tip)))
+    end
+    self:PaintPut()
   end
 
   function view:Stay()

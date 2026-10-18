@@ -392,63 +392,57 @@ describe("WoW game adapter", function()
       assert.are.equal(5000, w.tradeMoneySet)
     end)
 
-    describe("a tip asked for before the trade window opens (R63)", function()
+    -- SetTradeMoney is restricted: it is only tried from the player's own click
+    -- (the arrival window's Put button), never from a game event (R64).
+    describe("the trade window (R64)", function()
       before_each(function()
         listen()
       end)
 
-      it("is put in the trade when the window opens with the same partner", function()
-        assert.is_true(game:openTrade("Dar Kbolt"))
-        assert.is_false(game:trySetTradeMoney(10000)) -- no window yet: kept, and still never claimed
+      it("never puts a tip in the trade from the TRADE_SHOW event", function()
+        game:openTrade("Dar Kbolt")
+        assert.is_false(game:trySetTradeMoney(10000)) -- no window yet: nothing kept, nothing tried
+        w.units.NPC = { name = "Dar Kbolt" }
+        w.fire("TRADE_SHOW")
         assert.is_nil(w.tradeMoneySet)
         w.advance(3)
-        w.units.NPC = { name = "Dar Kbolt" }
-        w.fire("TRADE_SHOW")
-        assert.are.equal(10000, w.tradeMoneySet)
-        -- It is used once: the next window gets nothing.
-        w.tradeMoneySet = nil
         w.fire("TRADE_CLOSED")
         w.fire("TRADE_SHOW")
         assert.is_nil(w.tradeMoneySet)
       end)
 
-      it("is not put in a trade with someone else, or after 10 seconds", function()
-        game:openTrade("Dar Kbolt")
-        game:trySetTradeMoney(10000)
-        w.units.NPC = { name = "Bo Lee" }
-        w.fire("TRADE_SHOW")
-        assert.is_nil(w.tradeMoneySet)
-        w.fire("TRADE_CLOSED")
-
-        game:openTrade("Dar Kbolt")
-        game:trySetTradeMoney(10000)
-        w.advance(11)
-        w.units.NPC = { name = "Dar Kbolt" }
-        w.fire("TRADE_SHOW")
-        assert.is_nil(w.tradeMoneySet)
-      end)
-
-      it("is not remembered without a trade asked for (a payout trade or a stray call sets nothing)", function()
-        game:trySetTradeMoney(10000) -- no openTrade before it: no partner to hold it for
-        game:openTrade("Dar Kbolt") -- an openTrade with no tip
-        w.units.NPC = { name = "Dar Kbolt" }
-        w.fire("TRADE_SHOW")
-        assert.is_nil(w.tradeMoneySet)
-      end)
-
-      it("never raises when the game refuses it, and the trade is still followed", function()
-        game:openTrade("Dar Kbolt")
-        game:trySetTradeMoney(10000)
-        w.tradeRaises = true
+      it("knows whether a trade window with a player is open", function()
+        assert.is_false(game:tradeOpenWith("Dar Kbolt"))
         w.units.NPC = { name = "Dar Kbolt" }
         w.money = 7000
-        assert.has_no.errors(function() w.fire("TRADE_SHOW") end)
-        assert.are.equal(0, #logged)
-        w.fire("UI_INFO_MESSAGE", 1, "Trade complete.")
+        w.fire("TRADE_SHOW")
+        assert.is_true(game:tradeOpenWith("Dar Kbolt"))
+        assert.is_false(game:tradeOpenWith("Bo Lee"))
+        assert.is_false(game:tradeOpenWith(nil))
         w.fire("TRADE_CLOSED")
-        w.money = 6000
-        w.fire("PLAYER_MONEY")
-        assert.are.same({ { "TRADE_DONE", "Dar Kbolt", 1000, 0 } }, events)
+        assert.is_false(game:tradeOpenWith("Dar Kbolt"))
+      end)
+
+      it("names no partner for a window whose partner or starting money the game doesn't give", function()
+        w.money = 7000
+        w.fire("TRADE_SHOW") -- no "NPC" unit
+        assert.is_false(game:tradeOpenWith("Dar Kbolt"))
+        w.fire("TRADE_CLOSED")
+        w.units.NPC = { name = "Dar Kbolt" }
+        w.money = nil -- the money is not followed (R55), the window is still open
+        w.fire("TRADE_SHOW")
+        assert.is_true(game:tradeOpenWith("Dar Kbolt"))
+      end)
+
+      it("tries the money from the click while that window is open, and never raises", function()
+        w.units.NPC = { name = "Dar Kbolt" }
+        w.fire("TRADE_SHOW")
+        w.tradeRaises = true
+        assert.has_no.errors(function() assert.is_false(game:trySetTradeMoney(10000)) end)
+        w.tradeRaises = false
+        assert.is_false(game:trySetTradeMoney(10000))
+        assert.are.equal(10000, w.tradeMoneySet)
+        assert.are.equal(0, #logged)
       end)
     end)
 
