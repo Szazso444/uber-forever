@@ -403,14 +403,16 @@ function M.start()
       main.windows.Refresh() -- the real windows go quiet
     end
     -- You's own windows, then one set for each sim player whose side You answers.
-    s.windows[1] = main:Listen(s.you.engine, s.you.db)
+    s.windows[1] = main:Listen(s.you.engine, s.you.db, { sim = true })
     s.you.engine:on("STATUS", function(_, line)
       if not main:IsShown() then
         say(line)
       end
     end)
     for i, p in ipairs({ s.dar, s.mag, s.cee1, s.cee2 }) do
-      s.windows[#s.windows + 1] = main.attachWindows(p.engine, { label = p.name .. " (sim)", always = true, slot = i })
+      s.windows[#s.windows + 1] = main.attachWindows(p.engine, {
+        label = p.name .. " (sim)", always = true, slot = i, sim = true,
+      })
     end
     s.frame = buildControls(s)
     W.setText(s.frame.status, L.SIM_HINT)

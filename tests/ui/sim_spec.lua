@@ -96,6 +96,12 @@ describe("/taxi sim", function()
       assert.is_true(ui:shows("Needs 2 clickers"))
     end)
 
+    it("warns not to play Hardcore content meanwhile: real death reports are paused", function()
+      local line = ui.prints[1]
+      assert.are.equal("Taxi: " .. ns.L.SIM_STARTED, line)
+      assert.truthy(line:find("Don't play Hardcore content while /taxi sim is on — real death reports are paused.", 1, true))
+    end)
+
     it("says it is running when started again, and builds no second world", function()
       local world = Sim.state.world
       ui.prints = {}
@@ -157,7 +163,7 @@ describe("/taxi sim", function()
 
       -- The summon: GREEN, with the Summon Guard's lines, and no accept button.
       ui:press("Offer summon (green)")
-      local title = ui:one{ kind = "FontString", text = "Summon Guard: GREEN - matches your ride" }
+      local title = ui:one{ kind = "FontString", text = "(sim) Summon Guard: GREEN - matches your ride" }
       assert.are.same({}, ui:find{ kind = "Button", within = title.parent })
       assert.is_true(ui:shows("✓ Trust rating OK"))
 
@@ -190,7 +196,7 @@ describe("/taxi sim", function()
       pass(2)
       ui:press("Accept invite")
       ui:press("Offer summon (wrong place)")
-      ui:one{ kind = "FontString", text = "Summon Guard: RED - do not accept" }
+      ui:one{ kind = "FontString", text = "(sim) Summon Guard: RED - do not accept" }
       assert.is_true(ui:shows("✗ Destination: Searing Gorge (agreed: Tanaris)"))
       assert.is_true(ui:shows("✗ Warlock is not at the agreed spot"))
       assert.is_true(ui:shows("✓ Summoner: Dar Kbolt"))
@@ -352,7 +358,7 @@ describe("/taxi sim", function()
       pass(2)
       ui:press("Accept invite")
       ui:press("Offer summon (green)")
-      assert.is_not_nil(ui:find{ kind = "FontString", text = "Summon Guard: GREEN - matches your ride" }[1])
+      assert.is_not_nil(ui:find{ kind = "FontString", text = "(sim) Summon Guard: GREEN - matches your ride" }[1])
       ui:press("Accept summon")
       ui:click(window("You arrived").stars.buttons[5])
       ui:press("Open trade with Dar Kbolt")
@@ -460,7 +466,76 @@ describe("/taxi sim", function()
       assert.is_true(ui:shows("Tra Veler (level 44)"))
     end)
 
-    it("keeps what the real engine says out of the sim's footer, ", function()
+    -- A real summon is judged by the real engine and shown beside the real popup,
+    -- sim or no sim; the sim's own panels are labelled and never go near a popup.
+    describe("when a real summon comes during the sim", function()
+      local REAL_YELLOW = "Summon Guard: YELLOW - be careful"
+      local SIM_YELLOW = "(sim) Summon Guard: YELLOW - be careful"
+
+      local function titled(title)
+        local found = ui:find{ kind = "FontString", text = title }
+        return found[1] and found[1].parent
+      end
+
+      local function lastPoint(frame)
+        return frame.points[#frame.points]
+      end
+
+      before_each(function()
+        start()
+        Sim.start()
+      end)
+
+      it("still shows the real panel next to the real popup", function()
+        local popup = ui.env.CreateFrame("Frame", "StaticPopup1", ui.env.UIParent)
+        ui.popups.CONFIRM_SUMMON = popup
+        w:offerSummon("Dar Kbolt", "Tra Veler") -- the real world: the real warlock, the real player
+        local real = assert(titled(REAL_YELLOW))
+        assert.are.same({ "TOPLEFT", popup, "TOPRIGHT", 8, 0 }, lastPoint(real))
+        assert.is_true(ui:shows("✗ Not a Taxi ride: Dar Kbolt → Tanaris"))
+        assert.is_true(ui:visible(real))
+        w:fire(t.me, "SUMMON_GONE") -- the real popup closes
+        assert.is_nil(titled(REAL_YELLOW))
+      end)
+
+      it("keeps the sim's panel apart: labelled, at the top centre, whatever the real popup does", function()
+        local popup = ui.env.CreateFrame("Frame", "StaticPopup1", ui.env.UIParent)
+        ui.popups.CONFIRM_SUMMON = popup
+        local looked = 0
+        local find = ui.env.StaticPopup_FindVisible
+        ui.env.StaticPopup_FindVisible = function(...)
+          looked = looked + 1
+          return find(...)
+        end
+        ui:press("Offer stranger summon")
+        local panel = assert(titled(SIM_YELLOW))
+        assert.is_nil(titled(REAL_YELLOW))
+        ui:update(1) -- its re-anchoring poll runs: it still does not look
+        assert.are.equal(0, looked)
+        assert.are.same({ "TOP", ui.env.UIParent, "TOP", 0, -24 }, lastPoint(panel))
+        -- Both at once: each keeps its own place.
+        w:offerSummon("Dar Kbolt", "Tra Veler")
+        local real = assert(titled(REAL_YELLOW))
+        assert.is_true(looked > 0)
+        assert.are.same({ "TOPLEFT", popup, "TOPRIGHT", 8, 0 }, lastPoint(real))
+        assert.are.same({ "TOP", ui.env.UIParent, "TOP", 0, -24 }, lastPoint(panel))
+      end)
+
+      it("leaves the real panel working after /taxi sim off", function()
+        local popup = ui.env.CreateFrame("Frame", "StaticPopup1", ui.env.UIParent)
+        ui.popups.CONFIRM_SUMMON = popup
+        w:offerSummon("Dar Kbolt", "Tra Veler")
+        assert.is_not_nil(titled(REAL_YELLOW))
+        Sim.stop()
+        assert.is_not_nil(titled(REAL_YELLOW)) -- a real verdict is not taken away by the sim ending
+        w:fire(t.me, "SUMMON_GONE")
+        assert.is_nil(titled(REAL_YELLOW))
+        w:offerSummon("Dar Kbolt", "Tra Veler")
+        assert.are.same({ "TOPLEFT", popup, "TOPRIGHT", 8, 0 }, lastPoint(assert(titled(REAL_YELLOW))))
+      end)
+    end)
+
+    it("keeps what the real engine says out of the sim's footer", function()
       start()
       Sim.start()
       t.me.engine:status("STATUS_LEAVE_GROUP") -- the real engine, on the real channel's business

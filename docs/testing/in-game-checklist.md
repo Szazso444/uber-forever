@@ -17,6 +17,11 @@ you answer for them in windows marked "(sim)". Answer a request within 30
 seconds and take an invite within 60, or the sim traveler gives up, like a real
 one.
 
+**Don't play Hardcore content while /taxi sim is on — real death reports are
+paused.** (The real Engine is muted for the whole sim, so a real death is not
+reported until `/taxi sim off`. A real summon still gets its real Summon Guard
+panel next to the real popup; the sim's panels say "(sim)".)
+
 ### The board
 - [ ] Travel > Summons: Dar Kbolt first and in green ("★ 4.7 · 6 summons"), then
       Ann Other ("★ 1.5 · 4 summons · New", "⚠ 1 reported death").
@@ -76,3 +81,5 @@ one.
       (`StaticPopup_FindVisible("CONFIRM_SUMMON")`); with no popup it sits at
       the top centre.
 - [ ] Decline summon cancels the real popup (`C_SummonInfo.CancelSummon`).
+- [ ] With `/taxi sim` on, a real summon still shows the real panel (no "(sim)" in
+      its title) next to the real popup, and the sim's panel stays at the top centre.

@@ -114,7 +114,7 @@ describe("summon windows", function()
         assert.is_nil(panel("Summon Guard: GREEN - matches your ride"))
         w:acceptSummon("Tra Veler")
         -- A verdict that is still up when the landing is seen goes with the ARRIVED.
-        t.me.engine:emit("GUARD_VERDICT", { level = "GREEN", checks = {} }, nil)
+        t.me.engine:emit("GUARD_VERDICT", { level = "GREEN", checks = { { id = "x", ok = true, level = "RED", text = "fine" } } }, nil)
         assert.is_not_nil(panel("Summon Guard: GREEN - matches your ride"))
         t.me.engine:emit("ARRIVED", {})
         assert.is_nil(panel("Summon Guard: GREEN - matches your ride"))
@@ -182,6 +182,103 @@ describe("summon windows", function()
         assert.are.same({ "Decline summon" }, buttonsOf(p))
         t.me.engine:emit("GUARD_VERDICT", { level = "PURPLE", checks = "junk" }, nil)
         assert.is_not_nil(panel("Summon Guard: RED - do not accept"))
+      end)
+    end)
+
+    -- R61: the panel does not take the verdict's word for it. It shows the worse of
+    -- the verdict's level and its worst failed check, and a verdict that has nothing
+    -- to show for itself (no checks, too many) is RED.
+    describe("judging a verdict for itself (R61)", function()
+      before_each(function() start("me", { trusted = true }) end)
+
+      local function check(ok, level, text)
+        return { id = text, ok = ok, level = level, text = text }
+      end
+
+      local function emit(level, checks)
+        t.me.engine:emit("GUARD_VERDICT", { level = level, checks = checks }, nil)
+      end
+
+      -- The texts the panel with this title shows, its title first.
+      local function shown(title)
+        local p = assert(panel(title), title)
+        local out = {}
+        for _, fs in ipairs(ui:find{ kind = "FontString", within = p }) do
+          out[#out + 1] = fs:GetText()
+        end
+        return out, p
+      end
+
+      it("shows RED, with Decline summon, for a GREEN verdict that has a failed RED check", function()
+        emit("GREEN", { check(true, "RED", "Summoner: Dar Kbolt"), check(false, "RED", "Warlock is not at the agreed spot") })
+        local _, p = shown("Summon Guard: RED - do not accept")
+        assert.are.same(allEdges(RED), borderOf(p))
+        assert.are.same({ "Decline summon" }, buttonsOf(p))
+        assert.is_nil(panel("Summon Guard: GREEN - matches your ride"))
+      end)
+
+      it("shows the worse of the two: YELLOW stays YELLOW, a failed RED check lifts YELLOW to RED, RED stays RED", function()
+        emit("YELLOW", { check(true, "RED", "a"), check(false, "YELLOW", "b") })
+        assert.is_not_nil(panel("Summon Guard: YELLOW - be careful"))
+        emit("YELLOW", { check(true, "RED", "a"), check(false, "RED", "b") })
+        assert.is_not_nil(panel("Summon Guard: RED - do not accept"))
+        emit("GREEN", { check(false, "YELLOW", "b") })
+        assert.is_not_nil(panel("Summon Guard: YELLOW - be careful"))
+        emit("RED", { check(true, "YELLOW", "a") })
+        assert.is_not_nil(panel("Summon Guard: RED - do not accept"))
+      end)
+
+      it("takes a check that is not plainly ok, or whose level it cannot read, as failed and RED", function()
+        emit("GREEN", { { id = "x", level = "YELLOW", text = "no ok field" } })
+        assert.is_not_nil(panel("Summon Guard: YELLOW - be careful"))
+        emit("GREEN", { check(false, "PURPLE", "unknown level") })
+        assert.is_not_nil(panel("Summon Guard: RED - do not accept"))
+        emit("GREEN", { check(false, nil, "no level") })
+        assert.is_not_nil(panel("Summon Guard: RED - do not accept"))
+        emit("GREEN", { check(true, "RED", "ok"), "junk" })
+        assert.is_not_nil(panel("Summon Guard: RED - do not accept"))
+      end)
+
+      it("shows RED for a GREEN verdict with no checks, or none that it can read", function()
+        emit("GREEN", {})
+        assert.are.same({ "Decline summon" }, buttonsOf(assert(panel("Summon Guard: RED - do not accept"))))
+        emit("GREEN", nil)
+        assert.is_not_nil(panel("Summon Guard: RED - do not accept"))
+        emit("YELLOW", "junk")
+        assert.is_not_nil(panel("Summon Guard: RED - do not accept"))
+        assert.is_nil(panel("Summon Guard: YELLOW - be careful"))
+      end)
+
+      it("shows exactly the lines of the verdict on show: a 7-line verdict, then a 1-line one", function()
+        local seven = {}
+        for i = 1, 7 do
+          seven[i] = check(true, "RED", "line " .. i)
+        end
+        emit("GREEN", seven)
+        assert.are.equal(1 + 7, #shown("Summon Guard: GREEN - matches your ride"))
+        emit("GREEN", { check(true, "RED", "only line") })
+        local texts = shown("Summon Guard: GREEN - matches your ride")
+        assert.are.same({ "Summon Guard: GREEN - matches your ride", "✓ only line" }, texts)
+        assert.is_false(ui:shows("line 7"))
+      end)
+
+      it("shows RED when there are more checks than lines, ending in '... more checks failed' if a hidden one failed", function()
+        local many = {}
+        for i = 1, 12 do
+          many[i] = check(true, "RED", "line " .. i)
+        end
+        emit("GREEN", many) -- more than it can show, every one ok: RED all the same
+        local texts = shown("Summon Guard: RED - do not accept")
+        assert.are.equal(1 + 8, #texts)
+        assert.is_false(ui:shows("more checks failed"))
+        assert.is_true(ui:shows("✓ line 8"))
+        assert.is_false(ui:shows("line 9"))
+        many[11] = check(false, "RED", "line 11")
+        emit("GREEN", many)
+        texts = shown("Summon Guard: RED - do not accept")
+        assert.are.equal(1 + 9, #texts)
+        assert.are.equal("… more checks failed", texts[#texts])
+        assert.is_false(ui:shows("line 11"))
       end)
     end)
 

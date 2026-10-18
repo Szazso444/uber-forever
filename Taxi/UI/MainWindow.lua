@@ -96,7 +96,8 @@ end
 -- History journal and that player's windows. The Engine is the real one, or
 -- "You" while /taxi sim runs (then the real one's events are ignored, as the
 -- UI is showing another player). Returns the windows (Main.attachWindows).
-function Main:Listen(engine, db)
+-- opts goes to them: the sim passes { sim = true } for its players.
+function Main:Listen(engine, db, opts)
   local function showing(fn)
     return function(...)
       if ns.engine == engine then
@@ -120,7 +121,7 @@ function Main:Listen(engine, db)
     self:notify(L.fmt("NOTICE_APP_DECLINED", tostring(neg.owner)))
   end))
   UI.History.attach(engine, db)
-  return Main.attachWindows(engine)
+  return Main.attachWindows(engine, opts)
 end
 
 -- What the Engine can't tell the window: the group changed (the secure

@@ -13,6 +13,17 @@ local _, ns = ...
 -- It is a plain frame hanging from UIParent, so it shows in combat, which is
 -- exactly when a wrong summon is most dangerous. The text of every check is
 -- escaped (it holds player names and area names).
+--
+-- It does not take a verdict's word for its level (R61): the level shown is the
+-- worse of the verdict's and its worst failed check's, a check that is not
+-- plainly ok is failed, and a verdict with no checks, or more than the panel has
+-- lines for, is RED.
+--
+-- The REAL engine's panel is always live, also while /taxi sim has bound the
+-- window to another player: a real summon must be judged and shown next to the
+-- real popup. The sim's own panels (opts.sim) never look at Blizzard's popup:
+-- they sit at the top centre and say "(sim)", so a made-up verdict can't be
+-- taken for the verdict of a real summon.
 local L = ns.L
 local UI = ns.UI
 local W = UI.Widgets
@@ -35,6 +46,25 @@ local COLORS = M.COLORS
 local function popup()
   local ok, frame = pcall(StaticPopup_FindVisible, "CONFIRM_SUMMON")
   return ok and frame or nil
+end
+
+local RANK = { GREEN = 0, YELLOW = 1, RED = 2 }
+local LEVELS = { [0] = "GREEN", "YELLOW", "RED" }
+
+-- The level to show for a verdict (R61) and whether it has more checks than lines.
+local function judge(verdict, checks)
+  local rank = RANK[verdict.level] or RANK.RED
+  if #checks == 0 or #checks > MAX_LINES then
+    rank = RANK.RED
+  end
+  for _, check in ipairs(checks) do
+    if type(check) ~= "table" then
+      rank = RANK.RED
+    elseif check.ok ~= true then
+      rank = math.max(rank, RANK[check.level] or RANK.RED)
+    end
+  end
+  return LEVELS[rank]
 end
 
 local function heightOf(fs)
@@ -78,7 +108,7 @@ local function build(view, link)
   return f
 end
 
-local function newView(link)
+local function newView(link, sim)
   local view = {}
 
   function view:Hide()
@@ -89,8 +119,9 @@ local function newView(link)
 
   -- To the right of Blizzard's summon popup when there is one, else top centre.
   -- Asked again while shown, in case the popup opens just after the verdict.
+  -- A sim panel never looks.
   function view:Anchor()
-    local f, target = self.frame, popup()
+    local f, target = self.frame, not sim and popup() or nil
     if self.anchored and target == self.anchoredTo then
       return
     end
@@ -109,16 +140,37 @@ local function newView(link)
     self.frame = f
     verdict = type(verdict) == "table" and verdict or {}
     local checks = type(verdict.checks) == "table" and verdict.checks or {}
-    local level = COLORS[verdict.level] and verdict.level or "RED" -- a verdict nobody can read is the worst
+    local level = judge(verdict, checks)
     local color = COLORS[level]
     f.border:SetColor(color[1], color[2], color[3])
-    W.say(f.title, L["GUARD_TITLE_" .. level], color)
+    W.say(f.title, (sim and L.GUARD_SIM or "") .. L["GUARD_TITLE_" .. level], color)
     local height = 10 + heightOf(f.title)
+    -- Too many checks: the last line is kept for "... more checks failed", if one
+    -- of the checks not shown failed (the level is RED either way).
+    local overflow = #checks > MAX_LINES
+    local shown = overflow and MAX_LINES - 1 or #checks
+    local hiddenFailed = false
+    if overflow then
+      for i = MAX_LINES, #checks do
+        hiddenFailed = hiddenFailed or type(checks[i]) ~= "table" or checks[i].ok ~= true
+      end
+    end
     for i, line in ipairs(f.lines) do
       local check = checks[i]
-      if type(check) == "table" then
-        local tint = check.ok and COLORS.GREEN or COLORS[check.level] or COLORS.RED
-        W.say(line, (check.ok and W.CHECK or W.CROSS) .. " " .. tostring(check.text), tint)
+      local text, tint
+      if i <= shown then
+        if type(check) ~= "table" then
+          text, tint = W.CROSS .. " " .. L.GUARD_UNKNOWN, COLORS.RED
+        elseif check.ok == true then
+          text, tint = W.CHECK .. " " .. tostring(check.text), COLORS.GREEN
+        else
+          text, tint = W.CROSS .. " " .. tostring(check.text), COLORS[check.level] or COLORS.RED
+        end
+      elseif overflow and i == MAX_LINES and hiddenFailed then
+        text, tint = L.GUARD_MORE_FAILED, COLORS.RED
+      end
+      if text then
+        W.say(line, text, tint)
         line:Show()
         height = height + heightOf(line) + 4
       else
@@ -136,10 +188,14 @@ local function newView(link)
   return view
 end
 
--- Gives `engine` its guard panel. Returns { Refresh(), Detach() }.
+-- Gives `engine` its guard panel. Returns { Refresh(), Detach() }. opts.sim marks
+-- a player of /taxi sim; any other engine is the real one, whose panel is live
+-- whatever the window is showing.
 function M.attach(engine, opts)
-  local link = W.link(engine, opts)
-  local view = newView(link)
+  opts = opts or {}
+  local sim = opts.sim == true
+  local link = W.link(engine, { label = opts.label, slot = opts.slot, always = opts.always or not sim })
+  local view = newView(link, sim)
   link:on("GUARD_VERDICT", function(verdict)
     view:Show(verdict)
   end)
