@@ -146,6 +146,17 @@ describe("Board", function()
       assert.are.same({"Ann A", "Bob B", "Cid C"}, owners(B.list(b, {})))
     end)
 
+    it("filters by status when asked (R69)", function()
+      local b = B.new()
+      B.upsert(b, view("s1", "Ann A", {status="live"}), 0)
+      B.upsert(b, view("s2", "Bob B", {status="paused"}), 0)
+      B.upsert(b, view("s3", "Cid C", {status="recruiting"}), 0)
+      B.upsert(b, view("s4", "Dee D"), 0) -- no status
+      assert.are.same({"Ann A", "Bob B"}, owners(B.list(b, {statuses={live=true, paused=true}})))
+      assert.are.same({"Bob B", "Cid C"}, owners(B.list(b, {statuses={recruiting=true, paused=true}})))
+      assert.are.same({"Ann A", "Bob B", "Cid C", "Dee D"}, owners(B.list(b, {})))
+    end)
+
     it("breaks ties by score, then count, then owner name", function()
       local b = B.new()
       for i, o in ipairs({"Zed Z", "Amy A", "Max M", "Eve E", "Dan D"}) do B.upsert(b, view("s"..i, o), 0) end

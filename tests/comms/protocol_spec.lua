@@ -5,7 +5,7 @@ describe("Protocol", function()
   local FULL_STAND = {
     standId = "s1", kind = "lock", faction = "Alliance", mapID = 1455, x = 0.5, y = 0.25,
     wx = 100, wy = -20, zone = "Ironforge", subzone = "The Commons", seatsFree = 3, clickers = 2,
-    clickerPct = 25, portals = {}, note = "hi ^ there, 100%",
+    clickerPct = 25, portals = {}, note = "hi ^ there, 100%", status = "live",
   }
 
   local FULL_RECORD = {
@@ -21,7 +21,7 @@ describe("Protocol", function()
     { "STAND", {
       standId = "s2", kind = "mage", faction = "Horde", mapID = 1454, x = 0.123456, y = 0.75,
       wx = -3.5, wy = 1e15, zone = "Orgrimmar", subzone = "", seatsFree = 0, clickers = 0,
-      clickerPct = 25, portals = { "orgrimmar", "stormwind", "a,b;c" }, note = "",
+      clickerPct = 25, portals = { "orgrimmar", "stormwind", "a,b;c" }, note = "", status = "paused",
     } },
     { "STAND_END", { standId = "s1" } },
     { "REQUEST", { standId = "s1", offer = 5000, level = 60, dest = "Orgrimmar" } },
@@ -118,7 +118,7 @@ describe("Protocol", function()
         names[#names + 1] = field[1] .. ":" .. field[2]
       end
       assert.are.equal(
-        "standId:s kind:s faction:s mapID:n x:n y:n wx:n wy:n zone:s subzone:s seatsFree:n clickers:n clickerPct:n portals:L note:s",
+        "standId:s kind:s faction:s mapID:n x:n y:n wx:n wy:n zone:s subzone:s seatsFree:n clickers:n clickerPct:n portals:L note:s status:s",
         table.concat(names, " ")
       )
       assert.are.same({ { "target", "s" }, { "records", "R" } }, P.SCHEMAS.QUERY_R)
@@ -154,9 +154,9 @@ describe("Protocol", function()
     end)
 
     it("joins lists with commas, records with semicolons and record fields with commas", function()
-      -- 13 empty fields (standId .. clickerPct), then portals, then an empty note.
+      -- 13 empty fields (standId .. clickerPct), then portals, then an empty note and status.
       assert.are.equal(
-        "1^STAND^a" .. string.rep("^", 13) .. "^a,b%2Cc^",
+        "1^STAND^a" .. string.rep("^", 13) .. "^a,b%2Cc^^",
         P.encode("STAND", "a", { portals = { "a", "b,c" } })
       )
       assert.are.equal(
@@ -173,12 +173,12 @@ describe("Protocol", function()
         standId = "^", note = "|cffff0000red|r\nline", portals = { "^", "," }, zone = "%%",
       })
       assert.is_nil(wire:find("[|\n]"))
-      -- 1 version + type + msgId + the 15 STAND fields
+      -- 1 version + type + msgId + the 16 STAND fields
       local count = 0
       for _ in (wire .. "^"):gmatch("(.-)%^") do
         count = count + 1
       end
-      assert.are.equal(18, count)
+      assert.are.equal(19, count)
     end)
 
     it("raises on an unknown type", function()
@@ -384,8 +384,8 @@ describe("Protocol", function()
     end)
 
     it("skips empty list items", function()
-      assert.are.same({ "a", "b" }, P.decode("1^STAND^a" .. string.rep("^", 14) .. ",a,,b,^").portals)
-      assert.are.same({}, P.decode("1^STAND^a" .. string.rep("^", 14) .. ",,^").portals)
+      assert.are.same({ "a", "b" }, P.decode("1^STAND^a" .. string.rep("^", 14) .. ",a,,b,^^").portals)
+      assert.are.same({}, P.decode("1^STAND^a" .. string.rep("^", 14) .. ",,^^").portals)
     end)
   end)
 

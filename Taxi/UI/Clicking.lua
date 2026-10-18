@@ -1,8 +1,9 @@
 local _, ns = ...
 
--- The Clicking tab: summon stands that still need clickers, each with the
--- owner's Share rating, the share they offer and an Apply button with a box for
--- the share to ask for; and, below, the state of my own application or shift.
+-- The Clicking tab: summon stands that still need clickers (recruiting, or
+-- paused a clicker short), each with the owner's Share rating, the share they
+-- offer and an Apply button with a box for the share to ask for; and, below,
+-- the state of my own application or shift.
 local L, Board, Ledger, Money = ns.L, ns.Board, ns.Ledger, ns.Money
 local UI = ns.UI
 local W = UI.Widgets
@@ -13,6 +14,9 @@ UI.Clicking = M
 local ROWS = 5
 local WIDTH = 576
 local MAX_CLICKERS = 2 -- a stand takes two (Stand.addClicker)
+-- The stands that look for clickers (R69): recruiting ones, and paused ones a
+-- clicker left. A live stand has its crew.
+local SHOWN = { recruiting = true, paused = true }
 
 function M.new(parent, main)
   local view = {}
@@ -80,7 +84,7 @@ function M.new(parent, main)
       return shares[owner]
     end
     local stands = Board.list(engine.board, {
-      kind = "lock", faction = game:faction(), now = engine.clock:now(),
+      kind = "lock", faction = game:faction(), now = engine.clock:now(), statuses = SHOWN,
       isGuildmate = function(owner)
         return game:isGuildmate(owner)
       end,

@@ -70,6 +70,8 @@ end
 -- The stands matching `opts`, best first. `opts`:
 --   kind, faction  keep only this kind / faction when given
 --   zone           keep only stands in exactly this zone when given
+--   statuses       a set ({live = true, ...}): keep only stands with one of
+--                  these statuses when given (R69)
 --   isGuildmate    function(owner) -> bool; guildmates sort first
 --   rank           function(owner) -> score, count
 --   now            the current time: stands silent for more than STAND_TTL are
@@ -83,7 +85,8 @@ function M.list(b, opts)
     if listed(view, opts.now)
       and (opts.kind == nil or view.kind == opts.kind)
       and (opts.faction == nil or view.faction == opts.faction)
-      and (opts.zone == nil or view.zone == opts.zone) then
+      and (opts.zone == nil or view.zone == opts.zone)
+      and (opts.statuses == nil or opts.statuses[view.status] == true) then
       -- Ask once per stand here, so the sort does not call back into rating
       -- code on every comparison.
       local score, count = 0, 0

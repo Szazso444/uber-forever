@@ -672,6 +672,22 @@ describe("Driver", function()
     assert.is_false(s.flags.noShards)
     assert.are.equal("live", ns.Stand.status(s))
   end)
+
+  it("says the stand's status in every heartbeat, and the board keeps it (R69)", function()
+    local s = lock.engine:openStand{kind = "lock"}; w:advance(1)
+    local function heard() return ns.Board.get(t.engine.board, s.standId).status end
+    assert.are.equal("recruiting", wireOf(ns, w, "STAND", "Dar Kbolt")[1].status)
+    assert.are.equal("recruiting", heard())
+    for _, name in ipairs{"Cee One", "Cee Two"} do
+      add(name, {place = "gadgetzan"})
+      lock.game:invite(name); assert.is_true(w:acceptInvite(name))
+      assert.is_true(lock.engine:addOwnCrew(name, 25))
+    end
+    w:advance(60)
+    assert.are.equal("live", heard())
+    w:setCombat("Cee Two", true); w:advance(60)
+    assert.are.equal("paused", heard())
+  end)
 end)
 
 describe("Traveler", function()

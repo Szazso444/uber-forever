@@ -60,7 +60,8 @@ Engine.gameHandlers = registry()
 
 -- Fields a message must carry before any handler sees it (R13). Every field a
 -- type's schema has is listed unless it is optional:
---   STAND x, y (display only), subzone (can be blank), portals, note;
+--   STAND x, y (display only), subzone (can be blank), portals, note, status
+--   (none is taken as "paused", R69);
 --   REQUEST dest (mage rides only); DECLINE reason; RATING owed, received and
 --   pct (share ratings only); DEATH source (never trusted); PORTAL_UP dest.
 -- L and R fields always decode to a table, so they never need listing.

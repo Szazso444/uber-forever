@@ -321,6 +321,32 @@ describe("Stand", function()
       assert.are.same({"stormwind", "ironforge"}, S.toFields(mage()).portals)
     end)
 
+    it("toFields carries the stand's status (R69)", function()
+      local s = lock()
+      assert.are.equal("recruiting", S.toFields(s).status)
+      S.addClicker(s, "C One", 25, 1); S.addClicker(s, "C Two", 25, 1)
+      assert.are.equal("live", S.toFields(s).status)
+      S.removeClicker(s, "C Two")
+      assert.are.equal("paused", S.toFields(s).status) -- it was live: toFields asked Stand.status
+      assert.are.equal("live", S.toFields(mage()).status)
+    end)
+
+    it("fromFields takes recruiting, live or paused, and treats anything else as paused (R69)", function()
+      local function statusOf(kind, status)
+        local f = S.toFields(kind == "mage" and mage() or lock())
+        f.status = status
+        return S.fromFields(f, "Real Sender", 5).status
+      end
+      for _, status in ipairs({"recruiting", "live", "paused"}) do
+        assert.are.equal(status, statusOf("lock", status), status)
+      end
+      assert.are.equal("paused", statusOf("lock", nil))
+      assert.are.equal("paused", statusOf("lock", "closed"))
+      assert.are.equal("paused", statusOf("lock", "LIVE"))
+      assert.are.same({"live", "paused", "paused", "paused"},
+        {statusOf("mage", "live"), statusOf("mage", "paused"), statusOf("mage", "recruiting"), statusOf("mage", nil)})
+    end)
+
     it("toFields does not leak the stand's own portals table", function()
       local s = mage()
       local f = S.toFields(s)
@@ -355,6 +381,7 @@ describe("Stand", function()
         local name, kind = field[1], field[2]
         f[name] = kind == "n" and i or kind == "L" and {"p" .. i} or "v" .. i
       end
+      f.kind, f.status = "lock", "recruiting" -- a status fromFields keeps for that kind (R69)
       local v = S.fromFields(f, "Real Sender", 5)
       for _, field in ipairs(ns.Protocol.SCHEMAS.STAND) do
         assert.are.same(f[field[1]], v[field[1]], field[1])

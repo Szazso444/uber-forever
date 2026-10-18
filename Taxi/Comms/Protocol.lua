@@ -32,7 +32,7 @@ M.SCHEMAS = {
     { "mapID", "n" }, { "x", "n" }, { "y", "n" }, { "wx", "n" }, { "wy", "n" },
     { "zone", "s" }, { "subzone", "s" },
     { "seatsFree", "n" }, { "clickers", "n" }, { "clickerPct", "n" },
-    { "portals", "L" }, { "note", "s" },
+    { "portals", "L" }, { "note", "s" }, { "status", "s" },
   },
   STAND_END = STAND_ID,
   REQUEST = { { "standId", "s" }, { "offer", "n" }, { "level", "n" }, { "dest", "s" } },

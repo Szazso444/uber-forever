@@ -1,9 +1,10 @@
 local _, ns = ...
 
--- The Travel tab: the stands on the board, summons or portals, filtered by
--- zone. Guildmates come first and are green; the rest are ordered by trust
--- (Board.list). Picking a row shows its details and asks the channel about its
--- owner (Engine:query, once per cooldown); Request asks for a seat.
+-- The Travel tab: the live and paused stands on the board (SHOWN), summons or
+-- portals, filtered by zone. Guildmates come first and are green; the rest are
+-- ordered by trust (Board.list). Picking a row shows its details and asks the
+-- channel about its owner (Engine:query, once per cooldown); Request asks for
+-- a seat.
 --
 -- The Board is re-read on every repaint, which the window does every 5 s while
 -- it is open: BOARD_CHANGED only comes with the Engine's 30 s sweep, but a stand
@@ -17,6 +18,10 @@ UI.StandList = M
 
 local ROWS = 6
 local WIDTH = 576
+-- The stands travelers see (R69): live ones, and paused ones marked "Paused"
+-- with their Request button off. A warlock's stand still recruiting clickers
+-- is on the Clicking tab only.
+local SHOWN = { live = true, paused = true }
 
 local function seatsText(view)
   local free = view.seatsFree or 0
@@ -109,7 +114,7 @@ function M.new(parent, main)
     end
 
     local stands = Board.list(engine.board, {
-      kind = self.kind, faction = game:faction(), now = now,
+      kind = self.kind, faction = game:faction(), now = now, statuses = SHOWN,
       isGuildmate = function(owner)
         return game:isGuildmate(owner)
       end,
@@ -146,11 +151,13 @@ function M.new(parent, main)
       if self.zone == nil or stand.zone == self.zone then
         local ride = engine.rides[mine .. "#" .. stand.standId]
         local live = ride ~= nil and not Ride.isFinal(ride)
+        local paused = stand.status ~= "live"
+        local right = paused and L.TRAVEL_PAUSED or seatsText(stand)
         local spec = {
           title = stand.owner,
           titleColor = game:isGuildmate(stand.owner) and W.COLOR.green or nil,
           sub = W.place(stand),
-          right = live and (rawget(L, "RIDE_" .. ride.state) or ride.state) or seatsText(stand),
+          right = live and (rawget(L, "RIDE_" .. ride.state) or ride.state) or right,
           selected = self.selected == stand.standId,
           onClick = function()
             self:Select(stand)
@@ -165,7 +172,7 @@ function M.new(parent, main)
           spec.buttons = {
             {
               text = L.REQUEST,
-              enabled = actions and (stand.seatsFree or 0) > 0,
+              enabled = actions and not paused and (stand.seatsFree or 0) > 0,
               onClick = function(_, row)
                 onRequest(stand, row.buttons[1])
               end,

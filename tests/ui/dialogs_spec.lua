@@ -18,9 +18,9 @@ describe("dialogs", function()
   describe("the request dialog", function()
     before_each(function() start("me") end)
 
-    -- Lock opens a stand; the Travel tab's Request opens the dialog.
+    -- Lock opens a live stand; the Travel tab's Request opens the dialog.
     local function open()
-      local stand = t.standOf(t.lock)
+      local stand = t.liveStandOf(t.lock)
       Main:Show()
       ui:press("Request")
       return stand

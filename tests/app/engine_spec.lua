@@ -128,6 +128,14 @@ describe("Engine core", function()
       assert.is_not_nil(ns.Board.get(p.engine.board, "Bo Lee@40000"))
     end)
 
+    it("takes a STAND without a status, as a paused one (R69)", function()
+      local p = add("Ana Smith")
+      hear(p, "Bo Lee", "STAND", stand("Bo Lee@40000"))
+      assert.are.equal("paused", ns.Board.get(p.engine.board, "Bo Lee@40000").status)
+      hear(p, "Bo Lee", "STAND", stand("Bo Lee@40000", {status = "live"}))
+      assert.are.equal("live", ns.Board.get(p.engine.board, "Bo Lee@40000").status)
+    end)
+
     it("has a REQUIRED entry for every protocol type, naming fields of its schema only", function()
       for msgType, schema in pairs(ns.Protocol.SCHEMAS) do
         local required = ns.Engine.REQUIRED[msgType]

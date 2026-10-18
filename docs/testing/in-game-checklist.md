@@ -61,8 +61,9 @@ tests (a strict fake of the frame API); every box below needs a real run.
 Start with `/taxi sim`: the main window opens on the Travel tab and a "Sim
 controls" window appears at the left. `/taxi sim off` (or the Stop sim button)
 ends it. In the sim you are "You", a level 60 Hardcore hunter with 100g.
-Dar Kbolt (a guildmate's warlock), Ann Other (a doubtful warlock), Mag Ic (a
-mage), Cee One and Cee Two (clickers) and Stan Ger (a stranger) are simulated;
+Dar Kbolt (a guildmate's warlock, live with Cee One and Cee Two on his crew),
+Ann Other (a doubtful warlock whose crew left her, so her stand is paused), Mag
+Ic (a mage), Cee One and Cee Two (clickers) and Stan Ger (a stranger) are simulated;
 you answer for them in windows marked "(sim)". Answer a request within 30
 seconds and take an invite within 60, or the sim traveler gives up, like a real
 one.
@@ -75,9 +76,10 @@ next to the real popup; the sim's panels say "(sim)".)
 
 ### The board
 - [ ] Travel > Summons: Dar Kbolt first and in green ("★ 4.7 · 6 summons"), then
-      Ann Other ("★ 1.5 · 4 summons · New", "⚠ 1 reported death").
+      Ann Other ("★ 1.5 · 4 summons · New", "⚠ 1 reported death"), marked
+      "Paused" with her Request button off.
 - [ ] Travel > Portals: Mag Ic, "Portals: Stormwind, Ironforge, Darnassus".
-- [ ] Clicking: Dar Kbolt needs 1 clicker, Ann Other needs 2.
+- [ ] Clicking: only Ann Other, "Needs 2 clickers" (Dar Kbolt's stand is live).
 
 ### A ride
 - [ ] Request (Dar Kbolt) opens the request dialog; 50s, 1g and Custom (gold and
@@ -106,12 +108,13 @@ next to the real popup; the sim's panels say "(sim)".)
       Stay and click.
 
 ### Clickers
-- [ ] Clicker applies: "Dar Kbolt (sim) - Clicker offer" ("Cee Two asks for 40%",
-      "You offered 25%"); Accept, Counter (box) and Decline work.
+- [ ] Clicker applies: "Ann Other (sim) - Clicker offer" ("Stan Ger asks for 40%",
+      "You offered 30%"); Accept, Counter (box) and Decline work.
 - [ ] After a tip, End shift: "Cee One (sim) - Shift ended", "Owed 25s ·
       Received 0c", one star suggested; Submit sends the rating.
-- [ ] Applying yourself (Clicking tab) shows the offer in Dar Kbolt's window; the
-      counter-offer comes back to You as a "Counter-offer" window.
+- [ ] Applying yourself (Clicking tab, Ann Other's row) shows the offer in Ann
+      Other's window; the counter-offer comes back to You as a "Counter-offer"
+      window.
 
 ### The rest
 - [ ] Kill traveler: the red "Your Hardcore character has died." banner, every
@@ -361,10 +364,14 @@ separator survives.
 - [ ] **E1. A stand shows up on another client.** Do: W opens `/taxi`, My stand,
       "Warlock summons", Seats 3, Clicker share 25, a note, Open stand. Expect:
       W sees "Your stand is open." and the header "Recruiting clickers" with
-      "Seats 3 (3 free) · Clickers 0/2 · 25% of the tips each"; T sees W's row
-      on Travel > Summons within a heartbeat (60 seconds at most), in the right
-      zone group, with its free seats; selecting the row shows the note, the
-      clickers and the trust line, and sends one query.
+      "Seats 3 (3 free) · Clickers 0/2 · 25% of the tips each"; another
+      character sees W's row on the Clicking tab within a heartbeat (60 seconds
+      at most), but T's Travel > Summons does not list it: a stand still
+      recruiting clickers is not offered to travelers. Once two clickers are on
+      (F2) or two crew members were added (F4), T sees W's row on Travel >
+      Summons within a heartbeat, in the right zone group (T's own client's
+      name for W's map, D4), with its free seats; selecting the row shows the
+      note, the clickers and the trust line, and sends one query.
 - [ ] **E2. Guildmates are green and first.** Needs: a guildmate with Taxi.
       Do: the guildmate opens a stand (E1) while another stand is open too;
       look at Travel > Summons. Expect: the guildmate's row is green and above
@@ -390,7 +397,8 @@ separator survives.
       Expect: the header reads Recruiting clickers before the clickers join,
       Live once both have; Paused with "(in combat)" while W or a clicker is in
       combat; Paused with "(no soul shards)" while W has none, each within a
-      moment.
+      moment. T's row on Travel > Summons says "Paused", with its Request
+      button off, from W's next heartbeat on (60 seconds at most).
 - [ ] **E8. The form refuses wrong input in plain words.** Do and expect: seats 0
       says "Seats must be a whole number from 1 to 37."; "Warlock summons" on a
       non-warlock says "Only a warlock can open a summon stand."; "Mage portals"
@@ -434,9 +442,11 @@ separator survives.
       "They are not in your group."; adding the same member twice says "They
       are already in your crew."
 - [ ] **F5. Dismiss and leave.** Do: W dismisses a clicker; another clicker
-      presses Leave. Expect: the crew count drops, the stand header goes back
-      to Recruiting clickers, and the clicker's Clicking tab says "You are not
-      on a shift." (or shows the last shift).
+      presses Leave. Expect: the crew count drops, the stand header says
+      Paused (it was live; it says Recruiting clickers only for a stand that
+      never had both), the stand is on the Clicking tab again ("Needs 1
+      clicker"), and the clicker's Clicking tab says "You are not on a shift."
+      (or shows the last shift).
 - [ ] **F6. Shift end and payout.** Needs: a tipped ride (I4). Do: C1 presses
       Leave on the Clicking tab. Expect: C1 gets "Shift ended" with "Owed ... ·
       Received ...", stars suggested from what was paid (or optional when

@@ -64,6 +64,27 @@ describe("windows", function()
     return s
   end
 
+  -- Sends p's stand heartbeat now instead of in up to a minute.
+  local function heartbeat(p)
+    assert(p.engine:send("STAND", ns.Stand.toFields(p.engine.stand), "CHANNEL"))
+    w:advance(2)
+  end
+
+  -- p opens a stand that is live: a warlock's gets two clickers, written on
+  -- the stand itself, and its heartbeat goes out at once. The Travel tab lists
+  -- live and paused stands only (R69); signing a crew up is the Clicking and My
+  -- stand tabs' business.
+  local function liveStandOf(p, o)
+    local s = assert(p.engine:openStand(o or { kind = "lock" }))
+    if s.kind == "lock" then
+      for _, name in ipairs({ "Crew Mana", "Crew Manb" }) do
+        assert(ns.Stand.addClicker(s, name, s.clickerPct, w.clock:now()))
+      end
+    end
+    heartbeat(p)
+    return s
+  end
+
   describe("the window", function()
     before_each(function() boot("me") end)
 
@@ -107,7 +128,7 @@ describe("windows", function()
     it("repaints at once on an event and every five seconds anyway", function()
       Main:Show()
       assert.is_true(ui:shows("No stands on the board yet."))
-      standOf(lock)
+      liveStandOf(lock)
       assert.is_true(ui:shows("No stands on the board yet.")) -- marked dirty, painted on the next frame
       ui:update(0.02)
       assert.is_false(ui:shows("No stands on the board yet."))
@@ -283,7 +304,7 @@ describe("windows", function()
     before_each(function() boot("me") end)
 
     it("lists a stand with its owner, place, seats and trust", function()
-      standOf(lock, { kind = "lock", seats = 3, note = "Fast & kind" })
+      liveStandOf(lock, { kind = "lock", seats = 3, note = "Fast & kind" })
       Main:Show()
       assert.is_true(ui:shows("Dar Kbolt"))
       assert.is_true(ui:shows("Tanaris - Gadgetzan"))
@@ -292,8 +313,56 @@ describe("windows", function()
       assert.is_true(ui:visible(ui:one{ kind = "Button", text = "Request" }))
     end)
 
+    it("lists live and paused summon stands only; a paused one says so and can't be asked (R69)", function()
+      local ann = w:addPlayer{ name = "Ann Other", class = "WARLOCK", level = 45, place = "gadgetzan" }
+      local eve = w:addPlayer{ name = "Eve Ning", class = "WARLOCK", level = 45, place = "searing" }
+      liveStandOf(lock)
+      local paused = liveStandOf(ann)
+      ns.Stand.removeClicker(paused, "Crew Manb") -- a clicker left: paused
+      heartbeat(ann)
+      standOf(eve) -- recruiting: on the Clicking tab only
+      Main:Show()
+      local list = Main.views.travel.list
+      assert.are.same({ "Dar Kbolt", "Ann Other" }, { list.rows[1].title:GetText(), list.rows[2].title:GetText() })
+      assert.is_false(ui:shows("Eve Ning"))
+      assert.are.equal("3 seats free", list.rows[1].right:GetText())
+      assert.is_true(list.rows[1].buttons[1].enabled)
+      assert.are.equal("Paused", list.rows[2].right:GetText())
+      assert.is_false(list.rows[2].buttons[1].enabled)
+      assert.is_false(ui:click(list.rows[2].buttons[1])) -- off: nothing happens
+      -- Live again: the next heartbeat brings the button back.
+      assert(ns.Stand.addClicker(paused, "Crew Manb", 25, w.clock:now()))
+      heartbeat(ann)
+      Main:Invalidate()
+      ui:update(0.02)
+      assert.are.equal("3 seats free", list.rows[2].right:GetText())
+      assert.is_true(list.rows[2].buttons[1].enabled)
+    end)
+
+    it("marks a paused mage stand under Portals, and one whose message says no status (R69)", function()
+      standOf(mage, { kind = "mage" })
+      Main:Show()
+      ui:press("Portals")
+      local list = Main.views.travel.list
+      assert.is_true(list.rows[1].buttons[1].enabled)
+      w:setCombat("Mag Ic", true) -- a mage in combat: paused
+      heartbeat(mage)
+      Main:Invalidate()
+      ui:update(0.02)
+      assert.are.equal("Paused", list.rows[1].right:GetText())
+      assert.is_false(list.rows[1].buttons[1].enabled)
+      local f = ns.Stand.toFields(mage.engine.stand)
+      f.status = nil
+      local now = w.clock:now()
+      ns.Board.upsert(me.engine.board, ns.Stand.fromFields(f, "Mag Ic", now), now)
+      w:setCombat("Mag Ic", false)
+      Main:Invalidate()
+      ui:update(0.02)
+      assert.are.equal("Paused", list.rows[1].right:GetText())
+    end)
+
     it("shows the stars, the summons, New and reported deaths of a rated warlock", function()
-      standOf(lock)
+      liveStandOf(lock)
       local db = me.db
       for i = 1, 6 do
         local rater = "Old Rider" .. string.char(96 + i)
@@ -313,8 +382,8 @@ describe("windows", function()
 
     it("puts guildmates first and in green", function()
       local ann = w:addPlayer{ name = "Ann Other", class = "WARLOCK", level = 45, place = "gadgetzan" }
-      standOf(ann)
-      standOf(lock)
+      liveStandOf(ann)
+      liveStandOf(lock)
       Main:Show()
       local view = Main.views.travel
       assert.are.equal("Dar Kbolt", view.list.rows[1].title:GetText()) -- Ann sorts first by name; the guild beats it
@@ -374,12 +443,12 @@ describe("windows", function()
     end)
 
     it("picking a row shows its details and asks the channel about the warlock once", function()
-      standOf(lock, { kind = "lock", note = "Fast" })
+      liveStandOf(lock, { kind = "lock", note = "Fast" })
       Main:Show()
       assert.is_true(ui:shows("Select a stand to see its details."))
       ui:click(Main.views.travel.list.rows[1])
       assert.is_true(ui:shows("Note: Fast"))
-      assert.is_true(ui:shows("Clickers 0/2 · 25% of the tips each"))
+      assert.is_true(ui:shows("Clickers 2/2 · 25% of the tips each"))
       assert.is_not_nil(me.engine.queryBook.asked["Dar Kbolt"])
       w:advance(1)
       assert.are.equal(1, #wireOf(ns, w, "QUERY", "Tra Veler"))
@@ -390,8 +459,8 @@ describe("windows", function()
 
     it("filters by zone and forgets a zone whose last stand has left", function()
       local eve = w:addPlayer{ name = "Eve Ning", class = "WARLOCK", level = 45, place = "searing" }
-      standOf(lock)
-      standOf(eve)
+      liveStandOf(lock)
+      liveStandOf(eve)
       Main:Show()
       local view = Main.views.travel
       assert.is_true(ui:shows("Dar Kbolt") and ui:shows("Eve Ning"))
@@ -416,7 +485,7 @@ describe("windows", function()
     it("shows and filters a stand by its map's zone, not the zone its message names (R65)", function()
       local liar = w:addPlayer{ name = "Lia Rlock", class = "WARLOCK", level = 45, place = "searing",
         zoneText = "Ironforge", subzoneText = "The Commons" }
-      standOf(liar)
+      liveStandOf(liar)
       Main:Show()
       local view = Main.views.travel
       assert.are.equal("Searing Gorge - The Commons", view.list.rows[1].sub:GetText())
@@ -432,7 +501,7 @@ describe("windows", function()
     end)
 
     it("drops a stand that went quiet at its TTL without waiting for the 30 s sweep (R51)", function()
-      standOf(lock)
+      liveStandOf(lock)
       Main:Show()
       assert.is_true(ui:shows("Dar Kbolt"))
       local stand = next(me.engine.board.stands)
@@ -444,7 +513,7 @@ describe("windows", function()
     end)
 
     it("asks for a seat, shows where the ride is, and offers the button again after a decline", function()
-      local s = standOf(lock)
+      local s = liveStandOf(lock)
       Main:Show()
       ui:press("Request")
       assert.is_nil(me.engine.rides["Tra Veler#" .. s.standId]) -- the dialog asks about the tip first
@@ -464,7 +533,7 @@ describe("windows", function()
     end)
 
     it("says why a request was refused, on the dialog, which stays open", function()
-      local s = standOf(lock)
+      local s = liveStandOf(lock)
       Main:Show()
       lock.engine:closeStand()
       w:advance(2)
@@ -480,7 +549,7 @@ describe("windows", function()
 
     it("shows mage stands under Portals and asks which portal", function()
       local s = standOf(mage, { kind = "mage" })
-      standOf(lock)
+      liveStandOf(lock)
       Main:Show()
       assert.is_false(ui:shows("Mag Ic"))
       ui:press("Portals")
@@ -496,7 +565,7 @@ describe("windows", function()
     end)
 
     it("says a dead Hardcore character has died and turns every action off", function()
-      standOf(lock)
+      liveStandOf(lock)
       Main:Show()
       assert.is_true(ui:one{ kind = "Button", text = "Request" }.enabled)
       me.dead = true
@@ -933,6 +1002,28 @@ describe("windows", function()
       assert.are.equal("Dar Kbolt turned your application down.", Main:statusText())
       ui:update(0.02)
       assert.is_true(ui:one{ kind = "Button", text = "Apply" }.enabled)
+    end)
+
+    it("lists recruiting and paused stands that need clickers, never a live one (R69)", function()
+      local ann = w:addPlayer{ name = "Ann Other", class = "WARLOCK", level = 45, place = "gadgetzan" }
+      local eve = w:addPlayer{ name = "Eve Ning", class = "WARLOCK", level = 45, place = "searing" }
+      standOf(lock) -- recruiting
+      local paused = liveStandOf(ann)
+      ns.Stand.removeClicker(paused, "Crew Manb")
+      heartbeat(ann) -- paused, one clicker short
+      liveStandOf(eve)
+      w:setCombat("Eve Ning", true) -- paused in combat, with both clickers: needs nobody
+      heartbeat(eve)
+      Main:Show("clicking")
+      assert.is_true(ui:shows("Tanaris - Gadgetzan · Needs 2 clickers"))
+      assert.is_true(ui:shows("Tanaris - Gadgetzan · Needs 1 clicker"))
+      assert.is_true(ui:shows("Dar Kbolt") and ui:shows("Ann Other"))
+      assert.is_false(ui:shows("Eve Ning"))
+      local view = ns.Board.get(c1.engine.board, eve.engine.stand.standId, w.clock:now())
+      view.status, view.clickers = "live", 1 -- a live stand is never listed, whatever its count says
+      Main:Invalidate()
+      ui:update(0.02)
+      assert.is_false(ui:shows("Eve Ning"))
     end)
 
     it("leaves out a stand that has its two clickers", function()

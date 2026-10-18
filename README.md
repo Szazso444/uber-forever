@@ -25,7 +25,9 @@ agreed to before they accept it.
   then by rating), send a request with an optional tip offer, and the driver
   accepts; the addon invites. When a group of more than five is needed, the
   warlock gets a one-click "Convert to raid & invite". Clickers find stands on
-  the **Clicking** tab or are added from the summoner's own crew.
+  the **Clicking** tab or are added from the summoner's own crew; a warlock's
+  stand is on **Travel** once it has both clickers, and marked "Paused" while
+  it is a clicker short, in combat or out of soul shards.
 - **Summon Guard.** When a summon popup appears, a panel beside it compares it
   with your ride: the summoner, the landing area, whether the warlock is at the
   stand, whether anyone is in combat, the zone's level, whether the stand

@@ -52,6 +52,21 @@ return function(viewer, opts)
     return stand
   end
 
+  -- p opens a stand that is live, so travelers see it on the Travel tab (R69):
+  -- a warlock's gets two clickers written on it, and its heartbeat goes out at
+  -- once.
+  function t.liveStandOf(who, o)
+    local stand = assert(who.engine:openStand(o or { kind = "lock" }))
+    if stand.kind == "lock" then
+      for _, name in ipairs({ "Crew Mana", "Crew Manb" }) do
+        assert(ns.Stand.addClicker(stand, name, stand.clickerPct, w.clock:now()))
+      end
+    end
+    assert(who.engine:send("STAND", ns.Stand.toFields(stand), "CHANNEL"))
+    w:advance(2)
+    return stand
+  end
+
   -- `who` asks the stand for a ride (offering `offer`), its owner accepts, and
   -- `who` joins the owner's group. Returns who's ride.
   function t.groupUp(who, stand, offer, owner, dest)

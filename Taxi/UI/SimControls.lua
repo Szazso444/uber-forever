@@ -8,11 +8,15 @@ local _, ns = ...
 -- Ironforge, and ns.engine is bound to You's Engine, so the real window, the
 -- request dialog, the guard panel and the arrival window all drive it. The
 -- other players:
---   Dar Kbolt   a guildmate's warlock stand at Gadgetzan, well rated, Cee One on his crew
---   Ann Other   a warlock stand in Searing Gorge, little rated, with a reported death
+--   Dar Kbolt   a guildmate's warlock stand at Gadgetzan, well rated, live with
+--               Cee One and Cee Two on his crew
+--   Ann Other   a warlock stand in Searing Gorge, little rated, with a reported
+--               death; paused, because her crew left her (R69: on the Travel tab
+--               marked "Paused", and on the Clicking tab)
 --   Mag Ic      a mage's portal stand in Ironforge (Stormwind, Ironforge, Darnassus)
---   Cee One, Cee Two   clickers (Cee Two is the one "Clicker applies" brings)
---   Stan Ger    a stranger, for the summon nobody asked for
+--   Cee One, Cee Two   clickers
+--   Stan Ger    a stranger, for the summon nobody asked for; also the one
+--               "Clicker applies" brings to Ann's stand
 -- The other side of every flow is yours to answer: the sim players get the same
 -- windows You has (the driver toast, the clicker offer, the shift-end window),
 -- marked "(sim)" in their title, and the "Sim controls" buttons do what they
@@ -34,7 +38,7 @@ UI.Sim = M
 local YOU, DAR, ANN, CEE1, CEE2, MAG, STAN = "You", "Dar Kbolt", "Ann Other", "Cee One", "Cee Two", "Mag Ic", "Stan Ger"
 local TICK = 0.1 -- the sim clock moves at least this often (seconds of screen time)
 local MAX_STEP = 1 -- and by no more than this at once, so a stall doesn't make the world race
-local CLICKER_ASK = 40 -- the share Cee Two asks for (the stand offers 25)
+local CLICKER_ASK = 40 -- the share Stan Ger asks Ann Other for (her stand offers 30)
 
 local function say(text)
   print(L.CHAT_PREFIX .. text)
@@ -94,8 +98,28 @@ local function seedRatings(world, db)
   }, now))
 end
 
--- The players, their stands, Cee One on Dar's crew. Uses only the Engines'
--- own actions, as the tests do.
+-- Cee One and Cee Two sign up with `owner` at the share the stand offers, and
+-- join the owner's group.
+local function crewUp(s, owner)
+  local stand = owner.engine.stand
+  for _, p in ipairs({ s.cee1, s.cee2 }) do
+    assert(p.engine:applyClicker(stand.standId, stand.clickerPct))
+  end
+  step(s, 2)
+  for _, p in ipairs({ s.cee1, s.cee2 }) do
+    assert(owner.engine:respondClicker(p.name, "ACCEPT"))
+  end
+  step(s, 2)
+  step(s, 2)
+  for _, p in ipairs({ s.cee1, s.cee2 }) do
+    assert(p.engine.shift ~= nil, p.name .. " did not join " .. owner.name .. "'s crew")
+  end
+end
+
+-- The players and their stands: Ann's crew clicked for her (her stand went
+-- live) and left her group, which leaves her stand paused; then they signed up
+-- with Dar, whose stand is live. Uses only the Engines' own actions, as the
+-- tests do.
 local function buildWorld(s)
   local now = s.real.clock:now()
   local world = ns.World.new{ seed = math.floor(now) % 100000, start = now }
@@ -126,13 +150,14 @@ local function buildWorld(s)
   assert(s.ann.engine:openStand{ kind = "lock", seats = 2, clickerPct = 30, note = "Sim stand: needs clickers" })
   assert(s.mag.engine:openStand{ kind = "mage", seats = 3, note = "Sim portals" })
   step(s, 2)
-  assert(s.cee1.engine:applyClicker(s.dar.engine.stand.standId, 25))
+  crewUp(s, s.ann)
+  for _, p in ipairs({ s.cee1, s.cee2 }) do
+    world:leaveGroup(p, false) -- leaving her group ends the shift
+  end
   step(s, 2)
-  assert(s.dar.engine:respondClicker(CEE1, "ACCEPT"))
-  step(s, 2)
-  step(s, 2)
-  assert(s.cee1.engine.shift ~= nil, "Cee One did not join the crew")
-  step(s, 61) -- one heartbeat on, so the boards show the crew (a stand's count travels with its heartbeat)
+  assert(ns.Stand.status(s.ann.engine.stand) == "paused", "Ann's stand is not paused")
+  crewUp(s, s.dar)
+  step(s, 61) -- one heartbeat on, so the boards show the crews and statuses (they travel with the heartbeat)
 end
 
 -- What the buttons do ---------------------------------------------------------------------------
@@ -253,13 +278,13 @@ function ACTIONS.step(s)
 end
 
 function ACTIONS.clicker(s)
-  local stand = s.dar.engine.stand
-  local ok, why = s.cee2.engine:applyClicker(stand.standId, CLICKER_ASK)
+  local stand = s.ann.engine.stand
+  local ok, why = s.stan.engine:applyClicker(stand.standId, CLICKER_ASK)
   if not ok then
     return explain(why)
   end
   step(s, 1)
-  return L.fmt("SIM_CLICKER_ASKS", CEE2, DAR, CLICKER_ASK, DAR)
+  return L.fmt("SIM_CLICKER_ASKS", STAN, ANN, CLICKER_ASK, ANN)
 end
 
 function ACTIONS.kill(s)
@@ -412,7 +437,7 @@ function M.start()
         say(line)
       end
     end)
-    for i, p in ipairs({ s.dar, s.mag, s.cee1, s.cee2 }) do
+    for i, p in ipairs({ s.dar, s.ann, s.mag, s.cee1, s.cee2 }) do
       s.windows[#s.windows + 1] = main.attachWindows(p.engine, {
         label = p.name .. " (sim)", always = true, slot = i, sim = true,
       })
