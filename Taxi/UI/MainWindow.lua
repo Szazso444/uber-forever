@@ -38,6 +38,9 @@ local TABS = {
   { key = "history", label = "TAB_HISTORY", module = "History" },
 }
 
+-- The modules that give an Engine's player windows of their own (each has attach(engine, opts)).
+local WINDOWS = { "Dialogs", "GuardPanel", "ArrivalWindow", "ShiftEndWindow" }
+
 -- Engine events after which what a tab shows may have changed.
 local REPAINT_EVENTS = {
   "BOARD_CHANGED", "STAND_CHANGED", "REQUEST_RECEIVED", "RIDE_CHANGED", "CLICKER_APPLIED", "CLICK_OFFER",
@@ -60,25 +63,64 @@ function Main:Start()
     return
   end
   self.started = true
-  local function repaint()
-    self:Invalidate()
-  end
-  for _, event in ipairs(REPAINT_EVENTS) do
-    engine:on(event, repaint)
-  end
-  engine:on("STATUS", function(_, text)
-    self:notify(text)
-  end)
-  engine:on("RIDE_CHANGED", function(ride)
-    self:rideChanged(ride)
-  end)
-  engine:on("CLICK_DECLINED", function(neg)
-    self:notify(L.fmt("NOTICE_APP_DECLINED", tostring(neg.owner)))
-  end)
-  UI.History.attach(engine, ns.db)
+  self.windows = self:Listen(engine, ns.db)
   UI.MinimapButton.create()
   self:Watch()
   self:Create()
+end
+
+-- The windows that belong to one Engine's player (the request dialog is the
+-- window's own): the driver toast and clicker offer, the Summon Guard panel,
+-- the arrival window and the shift-end window. Returns { Refresh(), Detach() }.
+-- opts: see Widgets.link.
+function Main.attachWindows(engine, opts)
+  local bundles = {}
+  for _, name in ipairs(WINDOWS) do
+    bundles[#bundles + 1] = UI[name].attach(engine, opts)
+  end
+  return {
+    Refresh = function()
+      for _, bundle in ipairs(bundles) do
+        bundle.Refresh()
+      end
+    end,
+    Detach = function()
+      for _, bundle in ipairs(bundles) do
+        bundle.Detach()
+      end
+    end,
+  }
+end
+
+-- Listens to one Engine's events for the window: repaints, footer notices, the
+-- History journal and that player's windows. The Engine is the real one, or
+-- "You" while /taxi sim runs (then the real one's events are ignored, as the
+-- UI is showing another player). Returns the windows (Main.attachWindows).
+function Main:Listen(engine, db)
+  local function showing(fn)
+    return function(...)
+      if ns.engine == engine then
+        fn(...)
+      end
+    end
+  end
+  local repaint = showing(function()
+    self:Invalidate()
+  end)
+  for _, event in ipairs(REPAINT_EVENTS) do
+    engine:on(event, repaint)
+  end
+  engine:on("STATUS", showing(function(_, text)
+    self:notify(text)
+  end))
+  engine:on("RIDE_CHANGED", showing(function(ride)
+    self:rideChanged(ride)
+  end))
+  engine:on("CLICK_DECLINED", showing(function(neg)
+    self:notify(L.fmt("NOTICE_APP_DECLINED", tostring(neg.owner)))
+  end))
+  UI.History.attach(engine, db)
+  return Main.attachWindows(engine)
 end
 
 -- What the Engine can't tell the window: the group changed (the secure
@@ -186,10 +228,11 @@ end
 
 -- The footer's second line (spec 8.4): new ratings are only on disk after a
 -- /reload or logout, and the player is told whenever that is so, whatever the
--- first line says, except in combat.
+-- first line says, except in combat. Not during /taxi sim, whose data is
+-- never saved.
 function Main.reminderText()
   local engine = ns.engine
-  if engine ~= nil and engine.dirty and not UnitAffectingCombat("player") then
+  if engine ~= nil and engine.dirty and not UnitAffectingCombat("player") and not (UI.Sim and UI.Sim.active()) then
     return L.FOOTER_DIRTY
   end
   return ""
@@ -358,7 +401,7 @@ local function build(self, f)
   self.tabButtons, self.views, self.banner, self.footer, self.reminder = tabButtons, views, banner, footer, reminder
   self.frame = f
   if UISpecialFrames then
-    table.insert(UISpecialFrames, "TaxiMainFrame") -- Esc closes it (expected; checked in game)
+    table.insert(UISpecialFrames, "TaxiMainFrame") -- Esc closes it (expected; verify in game)
   end
 end
 

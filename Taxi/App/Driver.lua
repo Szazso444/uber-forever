@@ -737,6 +737,7 @@ Engine.respondClicker = Engine.action(function(e, clicker, action, pct)
     talks[name] = nil
     e:send("CLICK_NO", { standId = stand.standId }, "WHISPER", name)
   end
+  standChanged(e, stand) -- the talk is no longer waiting for me: the UI's offer window closes
   return true
 end)
 

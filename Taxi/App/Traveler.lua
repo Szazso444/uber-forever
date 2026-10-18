@@ -424,11 +424,13 @@ local function summonFailed(e, ride)
   changed(e, ride)
 end
 
--- The summon popup went away. Declined on the guard panel, or not the
+-- The summon popup went away. The UI hears it first (SUMMON_GONE, ride or no
+-- ride: the guard panel closes on it). Declined on the guard panel, or not the
 -- warlock's, the summon failed: wait for another, once. Otherwise it may have
 -- been accepted, and the landing may be seen only a moment later, so the
 -- failure waits LANDING_WINDOW seconds (R43).
 Engine.gameHandlers.SUMMON_GONE = function(e)
+  e:emit("SUMMON_GONE")
   for _, ride in pairs(e.rides) do
     local summon = ride.summon
     if isMine(e, ride) and ride.state == "summoning" then

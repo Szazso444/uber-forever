@@ -26,20 +26,11 @@ local function seatsText(view)
   return free == 1 and L.SEATS_FREE_ONE or L.fmt("SEATS_FREE_MANY", free)
 end
 
--- Asks stand `view` for a seat (offering no tip; the Request dialog of Task 18
--- takes the offer). dest is the portal wanted from a mage stand. Replace
--- UI.StandList.request to put a dialog in front of it.
-function M.request(view, dest)
-  local main = UI.Main
-  local ride, why = ns.engine:requestRide(view.standId, 0, dest)
-  main:report(ride, why, L.fmt("NOTICE_REQUESTED", tostring(view.owner)))
-  return ride
-end
-
--- The Request button: a mage stand with several portals asks which one.
+-- The Request button: a mage stand with several portals asks which one first.
+-- Either way the request dialog (UI/Dialogs.lua) takes the tip offer and sends it.
 local function onRequest(view, button)
   if view.kind ~= "mage" then
-    M.request(view, nil)
+    UI.Dialogs.request(view, nil)
     return
   end
   local items = {}
@@ -47,10 +38,10 @@ local function onRequest(view, button)
     items[#items + 1] = { value = key, text = W.portalName(key) }
   end
   if #items == 1 then
-    M.request(view, items[1].value)
+    UI.Dialogs.request(view, items[1].value)
   elseif #items > 1 then
     W.popupMenu(button, items, function(key)
-      M.request(view, key)
+      UI.Dialogs.request(view, key)
     end)
   end
 end

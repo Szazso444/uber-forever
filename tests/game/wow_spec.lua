@@ -855,6 +855,13 @@ describe("Init", function()
       assert.truthy(debugText():find("RegisterAddonMessagePrefix TaxiFvr: 3", 1, true))
     end)
 
+    it("does not call a prefix the game already had (DuplicatePrefix, after a /reload) an error", function()
+      fresh()
+      w.prefixResult = 1 -- RegisterAddonMessagePrefixResult.DuplicatePrefix
+      w.fire("ADDON_LOADED", "Taxi", false)
+      assert.is_false(debugText():find("RegisterAddonMessagePrefix", 1, true) ~= nil)
+    end)
+
     it("logs a failing ADDON_LOADED instead of raising it", function()
       fresh()
       env.C_ChatInfo.RegisterAddonMessagePrefix = function() error("prefix boom") end
@@ -943,6 +950,38 @@ describe("Init", function()
     ns.engine:status("STATUS_RAID_FAILED")
     assert.are.same({}, w.prints)
     assert.are.same({ key = "STATUS_RAID_FAILED", text = ns.L.STATUS_RAID_FAILED }, ns.status) -- still kept
+  end)
+
+  it("starts and ends the sim on /taxi sim and /taxi sim off, in any case and spacing", function()
+    boot(nil)
+    local calls = {}
+    ns.UI = { Sim = {
+      start = function() calls[#calls + 1] = "start" end,
+      stop = function() calls[#calls + 1] = "stop" end,
+    } }
+    env.SlashCmdList.TAXI("sim")
+    env.SlashCmdList.TAXI("  SIM   Off ")
+    assert.are.same({ "start", "stop" }, calls)
+    assert.are.same({}, w.prints)
+  end)
+
+  it("logs a sim that fails to start or stop, says so, and leaves the error to /taxi debug", function()
+    boot(nil)
+    ns.UI = { Sim = { start = function() error("no world", 0) end, stop = function() error("stuck", 0) end } }
+    env.SlashCmdList.TAXI("sim")
+    env.SlashCmdList.TAXI("sim off")
+    assert.are.same({ "Taxi: " .. ns.L.SIM_FAILED, "Taxi: " .. ns.L.SIM_FAILED }, w.prints)
+    w.prints = {}
+    env.SlashCmdList.TAXI("debug")
+    local text = table.concat(w.prints, "\n")
+    assert.truthy(text:find("sim start: no world", 1, true))
+    assert.truthy(text:find("sim stop: stuck", 1, true))
+  end)
+
+  it("explains itself on /taxi sim when the windows are not loaded", function()
+    boot(nil)
+    env.SlashCmdList.TAXI("sim")
+    assert.are.same({ "Taxi: " .. ns.L.SLASH_USAGE }, w.prints)
   end)
 
   it("toggles the main window on /taxi, and explains itself without one", function()

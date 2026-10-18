@@ -39,4 +39,9 @@ UI\MyStand.lua
 UI\Clicking.lua
 UI\History.lua
 UI\MinimapButton.lua
+UI\Dialogs.lua
+UI\GuardPanel.lua
+UI\ArrivalWindow.lua
+UI\ShiftEndWindow.lua
+UI\SimControls.lua
 Core\Init.lua

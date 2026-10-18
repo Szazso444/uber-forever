@@ -1,7 +1,10 @@
 -- A missing string shows its own key on screen (Locale falls back to the key),
 -- which a window test would only see if it happened to look at that text. This
 -- reads the UI sources and checks that every key they ask for exists.
-local FILES = { "Widgets", "MainWindow", "StandList", "MyStand", "Clicking", "History", "MinimapButton" }
+local FILES = {
+  "Widgets", "MainWindow", "StandList", "MyStand", "Clicking", "History", "MinimapButton",
+  "Dialogs", "GuardPanel", "ArrivalWindow", "ShiftEndWindow", "SimControls",
+}
 
 local function source(name)
   local f = assert(io.open("Taxi/UI/" .. name .. ".lua", "rb"))
@@ -33,6 +36,7 @@ describe("UI strings", function()
       for key in text:gmatch('and "([A-Z][A-Z0-9_]+)" or "[A-Z][A-Z0-9_]+"') do need(key, name) end
       for key in text:gmatch('and "[A-Z][A-Z0-9_]+" or "([A-Z][A-Z0-9_]+)"') do need(key, name) end
       for key in text:gmatch('label = "([A-Z][A-Z0-9_]+)"') do need(key, name) end
+      for key in text:gmatch('{ "([A-Z][A-Z0-9_]+)", "%l+" }') do need(key, name) end -- the sim's buttons
     end
     assert.is_true(found > 100, "the scan found only " .. found .. " keys") -- it is reading the files
     assert.are.same({}, missing)
@@ -48,6 +52,9 @@ describe("UI strings", function()
     end
     for _, outcome in ipairs({ "arrived", "declined", "cancelled", "shift" }) do
       keys[#keys + 1] = "OUTCOME_" .. outcome
+    end
+    for _, level in ipairs({ "GREEN", "YELLOW", "RED" }) do
+      keys[#keys + 1] = "GUARD_TITLE_" .. level
     end
     for _, role in ipairs({ "traveler_summon", "traveler_portal", "provider_summon", "provider_portal", "clicker" }) do
       keys[#keys + 1] = "HISTORY_" .. role
@@ -69,6 +76,8 @@ describe("UI strings", function()
       "bad_kind", "not_warlock", "low_level", "no_portals", "bad_seats", "bad_pct", "bad_note", "no_position",
       "unknown_ride", "full", "needs_raid", "no_trade", "unknown_clicker", "no_stand", "is_owner", "not_in_group",
       "already_crew", "seated", "own_stand", "mage", "on_shift", "over_share", "no_offer", "not_on_shift",
+      -- the arrival and shift-end windows
+      "zero", "too_much", "not_arrived", "bad_stars", "no_rating_for_portals", "unknown_shift",
     }
     local missing = {}
     for _, code in ipairs(codes) do

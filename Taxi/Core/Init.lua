@@ -15,6 +15,7 @@ local JOIN_DELAY = 5
 local JOIN_POLL = 0.5
 local JOIN_TIMEOUT = 10
 local PREFIX_OK = 0 -- Enum.RegisterAddonMessagePrefixResult.Success
+local PREFIX_DUPLICATE = 1 -- DuplicatePrefix: already registered, as after a /reload; as good as success
 
 local state = {
   errors = {}, -- the last MAX_ERRORS error lines
@@ -59,7 +60,7 @@ local function loaded()
   end
 
   local result = C_ChatInfo.RegisterAddonMessagePrefix(Config.PREFIX)
-  if result ~= PREFIX_OK then
+  if result ~= PREFIX_OK and result ~= PREFIX_DUPLICATE then
     log("RegisterAddonMessagePrefix " .. Config.PREFIX .. ": " .. tostring(result))
   end
   state.loaded = true
@@ -210,6 +211,24 @@ local function debug()
   end
 end
 
+-- /taxi sim and /taxi sim off (UI/SimControls.lua) start and end the made-up
+-- world. A failure is logged for /taxi debug and said in a line; the sim has
+-- undone what it had done by then.
+local function sim(action)
+  return function()
+    local module = ns.UI and ns.UI.Sim
+    if module == nil then
+      say(L.SLASH_USAGE)
+      return
+    end
+    local ok, err = pcall(module[action])
+    if not ok then
+      log("sim " .. action .. ": " .. tostring(err))
+      say(L.SIM_FAILED)
+    end
+  end
+end
+
 local commands = {
   [""] = function()
     local main = ns.UI and ns.UI.Main
@@ -220,11 +239,13 @@ local commands = {
     end
   end,
   debug = debug,
+  sim = sim("start"),
+  ["sim off"] = sim("stop"),
 }
 
 SLASH_TAXI1 = Config.SLASH
 SlashCmdList.TAXI = function(msg)
-  local command = commands[(Util.trim(msg) or ""):lower()]
+  local command = commands[(Util.trim(msg) or ""):lower():gsub("%s+", " ")]
   if command then
     command()
   else

@@ -26,6 +26,7 @@ M.PLACES = {
   gadgetzan = { mapID = 1446, zone = "Tanaris", subzone = "Gadgetzan", wx = 5000, wy = 5000, levels = { 40, 50 } },
   searing = { mapID = 1427, zone = "Searing Gorge", subzone = "Thorium Point", wx = -3000, wy = 900, levels = { 43, 50 } },
   stormwind = { mapID = 1453, zone = "Stormwind City", subzone = "Trade District", wx = -8000, wy = 600, levels = { 1, 60 } },
+  darnassus = { mapID = 1457, zone = "Darnassus", subzone = "Craftsmen's Terrace", wx = -9000, wy = -9000, levels = { 1, 60 } },
   deadmines = { mapID = 291, zone = "The Deadmines", subzone = "", wx = 0, wy = 0, levels = { 15, 25 }, inInstance = true },
 }
 

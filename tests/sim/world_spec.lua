@@ -34,6 +34,13 @@ describe("World", function()
     assert.are.same({mapID = 1427, zone = "Searing Gorge", subzone = "Thorium Point", wx = -3000, wy = 900, levels = {43, 50}}, P.searing)
     assert.are.same({mapID = 1453, zone = "Stormwind City", subzone = "Trade District", wx = -8000, wy = 600, levels = {1, 60}}, P.stormwind)
     assert.are.same({mapID = 291, zone = "The Deadmines", subzone = "", wx = 0, wy = 0, levels = {15, 25}, inInstance = true}, P.deadmines)
+    -- Every portal an Alliance mage learns ends in a place of this world (the in-game sim steps through them).
+    for _, portal in ipairs(ns.Config.PORTALS) do
+      if portal.key == "stormwind" or portal.key == "ironforge" or portal.key == "darnassus" then
+        assert.is_table(P[portal.key], portal.key)
+        assert.are.equal(portal.mapID, P[portal.key].mapID, portal.key)
+      end
+    end
   end)
 
   describe("addPlayer", function()

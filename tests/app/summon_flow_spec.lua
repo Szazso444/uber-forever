@@ -886,6 +886,21 @@ describe("Traveler", function()
     assert.are.same({}, emitted(t, "ARRIVED"))
   end)
 
+  it("tells the UI when the summon popup went away, ride or no ride (the guard panel hides on it)", function()
+    local _, ride = grouped()
+    w:offerSummon("Dar Kbolt", "Tra Veler"); w:advance(1)
+    assert.are.equal(0, #emitted(t, "SUMMON_GONE"))
+    t.engine:cancelSummon(); w:advance(1) -- declined on the guard panel: the popup closes
+    assert.are.equal(1, #emitted(t, "SUMMON_GONE"))
+    assert.are.equal("grouped", ride.state)
+    -- A summon nobody asked for: no ride is involved, the popup still goes away.
+    local stranger = add("Cee One")
+    w:offerSummon("Dar Kbolt", "Cee One"); w:advance(1)
+    assert.are.equal("YELLOW", last(stranger, "GUARD_VERDICT")[2].level)
+    w:fire(stranger, "SUMMON_GONE")
+    assert.are.equal(1, #emitted(stranger, "SUMMON_GONE"))
+  end)
+
   it("a landing seen within 30 s after the popup went away is still the summon's (R43)", function()
     local _, ride = grouped()
     w:offerSummon("Dar Kbolt", "Tra Veler"); w:advance(1)

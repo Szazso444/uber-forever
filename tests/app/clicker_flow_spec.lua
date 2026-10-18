@@ -63,6 +63,19 @@ describe("clicker flow", function()
     hear(c1, "Dar Kbolt", "TIP_ACK", {rideId = RIDE, amount = ack}, "PARTY")
   end
 
+  it("tells the UI when the owner counters or declines an application (STAND_CHANGED), so its offer window closes", function()
+    local s = lock.engine:openStand{kind = "lock", clickerPct = 25}
+    assert.is_true(c1.engine:applyClicker(s.standId, 30)); w:advance(2)
+    assert.is_true(c2.engine:applyClicker(s.standId, 30)); w:advance(2)
+    local before = #emitted(lock, "STAND_CHANGED")
+    assert.is_true(lock.engine:respondClicker("Cee One", "COUNTER", 20))
+    assert.are.equal(before + 1, #emitted(lock, "STAND_CHANGED"))
+    assert.is_true(lock.engine:respondClicker("Cee Two", "DECLINE"))
+    assert.are.equal(before + 2, #emitted(lock, "STAND_CHANGED"))
+    assert.are.same({nil, "unknown_clicker"}, {lock.engine:respondClicker("Cee Two", "DECLINE")})
+    assert.are.equal(before + 2, #emitted(lock, "STAND_CHANGED")) -- a refusal changes nothing
+  end)
+
   it("counter-offer agreed at 20%", function()
     local s = lock.engine:openStand{kind = "lock", clickerPct = 25}
     assert.is_true(c1.engine:applyClicker(s.standId, 30)); w:advance(2)

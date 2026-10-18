@@ -89,6 +89,9 @@ files["Taxi/UI"] = {
     "GetCursorPosition", -- dragging the minimap button
     "date", -- legacy (WoW's os.date): the History tab's times
     "UISpecialFrames", -- legacy: the names of the frames Esc closes (checked in game, Task 19)
+    "PlaySound", -- the toast's and the portal alert's sounds: PlaySound(SOUNDKIT.READY_CHECK)
+    "SOUNDKIT",
+    "StaticPopup_FindVisible", -- Blizzard's popup frame (Blizzard_StaticPopup), read to anchor the guard panel; never hooked
   },
 }
 

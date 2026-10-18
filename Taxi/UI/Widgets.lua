@@ -13,14 +13,19 @@ local _, ns = ...
 -- (a newline would add a line to a row and could forge one, say a trust line).
 -- Everything a list row or setText shows goes through W.escape, so no window
 -- can forget it (R14, R57).
-local L, Money = ns.L, ns.Money
+local L, Config, Money = ns.L, ns.Config, ns.Money
 
 local UI = ns.UI or {}
 ns.UI = UI
 local W = {}
 UI.Widgets = W
 
-W.STAR = "★" -- U+2605; checked in game (Task 19), swap this one line if the font lacks it
+W.STAR = "★" -- U+2605; verify in game (Task 19), swap this one line if the font lacks it
+-- The Summon Guard's lines start with these. Plain game fonts may lack them
+-- (the lines are also coloured, so a missing glyph costs looks, not meaning);
+-- verify in game (Task 19) and swap these two lines if need be.
+W.CHECK = "✓" -- U+2713
+W.CROSS = "✗" -- U+2717
 
 W.COLOR = {
   gold = { 1, 0.82, 0 },
@@ -32,9 +37,12 @@ W.COLOR = {
 
 -- Text -----------------------------------------------------------------------------
 
--- Text safe to show: every control character becomes a space and "|" becomes "||".
+-- Text safe to show: every ASCII control character becomes a space and "|"
+-- becomes "||". The class is spelled out (NUL, 1-31, DEL) instead of %c, which
+-- in some locales also matches bytes 0x80-0x9F and would eat the middle of
+-- UTF-8 glyphs such as ★ ⚠ → (R59).
 function W.escape(text)
-  local plain = tostring(text == nil and "" or text):gsub("%c", " ")
+  local plain = tostring(text == nil and "" or text):gsub("[%z\1-\31\127]", " ")
   return (plain:gsub("|", "||"))
 end
 
@@ -552,4 +560,177 @@ function W.list(parent, opts)
   end
 
   return list
+end
+
+-- Windows of their own ---------------------------------------------------------------------------
+
+-- Ties a window to one Engine. Engine events reach it only while that engine is
+-- the one the UI shows (ns.engine: the real one, or "You" while /taxi sim runs),
+-- so a window of the real engine is quiet during the sim and the other way round,
+-- unless opts.always is set: such a window acts for another player of the sim.
+-- opts.label names that player on the window; opts.slot moves the window a
+-- little, so the windows of several players don't hide each other.
+--   link:live()         whether events should reach the window now
+--   link:on(event, fn)  listens to an Engine event, while live
+--   link:dead()         whether this player is a dead Hardcore character (R35)
+--   link:detach()       stops listening for good
+function W.link(engine, opts)
+  opts = opts or {}
+  local link = { engine = engine, label = opts.label, slot = opts.slot or 0, always = opts.always == true, tokens = {} }
+  function link:live()
+    return not self.detached and (self.always or ns.engine == self.engine)
+  end
+  function link:on(event, fn)
+    self.tokens[#self.tokens + 1] = self.engine:on(event, function(...)
+      if self:live() then
+        fn(...)
+      end
+    end)
+  end
+  function link:dead()
+    local game = self.engine.game
+    return game:isHardcore() == true and game:isDead() == true
+  end
+  function link:detach()
+    self.detached = true
+    for _, token in ipairs(self.tokens) do
+      self.engine.callbacks:off(token)
+    end
+    self.tokens = {}
+  end
+  return link
+end
+
+-- A free-standing, movable window in Blizzard's frame style, hidden. It hangs
+-- from UIParent, never from the main window: that one holds the secure Summon
+-- button and is protected, so a window hanging from it could not be shown in
+-- combat, and these have to be (a summon can come in a fight). o: name (only
+-- for a window Esc should close), width, height, title, label (the sim player
+-- it acts for), slot, point/x/y (where it sits on the screen).
+function W.window(o)
+  local f = CreateFrame("Frame", o.name, UIParent, "BasicFrameTemplateWithInset")
+  f:Hide()
+  f:SetSize(o.width, o.height)
+  local point, slot = o.point or "CENTER", o.slot or 0
+  f:SetPoint(point, UIParent, point, (o.x or 0) + slot * 26, (o.y or 0) - slot * 26)
+  f:SetFrameStrata("DIALOG")
+  f:SetToplevel(true)
+  f:SetClampedToScreen(true)
+  f:SetMovable(true)
+  f:EnableMouse(true)
+  f:RegisterForDrag("LeftButton")
+  f:SetScript("OnDragStart", function(frame)
+    frame:StartMoving()
+  end)
+  f:SetScript("OnDragStop", function(frame)
+    frame:StopMovingOrSizing()
+  end)
+  if f.TitleText then
+    W.setText(f.TitleText, o.label and (o.label .. " - " .. o.title) or o.title)
+  end
+  return f
+end
+
+-- A line of text in a colour (W.COLOR value); nil colour is white.
+function W.say(fs, text, color)
+  W.setText(fs, text)
+  W.paint(fs, color)
+end
+
+-- A coloured edge for a frame: four thin textures (no backdrop template, which
+-- Forever may not have). border:SetColor(r, g, b) colours all four; border.edges
+-- lists them.
+function W.border(frame, size)
+  size = size or 2
+  local edges = {}
+  local function edge(first, second, vertical)
+    local t = frame:CreateTexture(nil, "BORDER")
+    t:SetPoint(first, frame, first, 0, 0)
+    t:SetPoint(second, frame, second, 0, 0)
+    if vertical then
+      t:SetWidth(size)
+    else
+      t:SetHeight(size)
+    end
+    edges[#edges + 1] = t
+  end
+  edge("TOPLEFT", "TOPRIGHT", false)
+  edge("BOTTOMLEFT", "BOTTOMRIGHT", false)
+  edge("TOPLEFT", "BOTTOMLEFT", true)
+  edge("TOPRIGHT", "BOTTOMRIGHT", true)
+  local border = { edges = edges }
+  function border:SetColor(r, g, b)
+    for _, t in ipairs(self.edges) do
+      t:SetColorTexture(r, g, b, 1)
+    end
+  end
+  return border
+end
+
+-- The tip choice: none, each preset (50s, 1g) and custom (gold and silver
+-- boxes). The chosen button is the disabled one, as with the tabs.
+--   picker:SetOffer(copper)   picks the preset equal to it, custom for any other
+--                             amount, none for nil or 0 (a tip offered earlier)
+--   picker:Read()             true and the copper (nil for none), or false when
+--                             custom holds nothing usable
+-- onChange(choice) runs when the player picks one.
+function W.tipPicker(parent, onChange)
+  local picker = CreateFrame("Frame", nil, parent)
+  picker:SetSize(300, 54)
+  picker.choice = "none"
+  picker.buttons = {}
+  local options = { { choice = "none", text = L.TIP_NONE } }
+  for _, copper in ipairs(Config.TIP_PRESETS) do
+    options[#options + 1] = { choice = copper, text = Money.format(copper) }
+  end
+  options[#options + 1] = { choice = "custom", text = L.TIP_CUSTOM }
+  for i, option in ipairs(options) do
+    local b = W.button(picker, option.text, 70, function()
+      picker:Select(option.choice)
+    end)
+    b:SetPoint("TOPLEFT", picker, "TOPLEFT", (i - 1) * 76, 0)
+    b.choice = option.choice
+    picker.buttons[i] = b
+  end
+  picker.custom = W.moneyInput(picker)
+  picker.custom:SetPoint("TOPLEFT", picker, "TOPLEFT", 0, -28)
+
+  function picker:Select(choice, quiet)
+    self.choice = choice
+    for _, b in ipairs(self.buttons) do
+      b:SetEnabled(b.choice ~= choice)
+    end
+    self.custom:SetShown(choice == "custom")
+    if onChange and not quiet then
+      onChange(choice)
+    end
+  end
+  function picker:SetOffer(copper)
+    local choice = "none"
+    if type(copper) == "number" and copper > 0 then
+      choice = "custom"
+      for _, preset in ipairs(Config.TIP_PRESETS) do
+        if preset == copper then
+          choice = preset
+        end
+      end
+    end
+    self.custom:Clear()
+    if choice == "custom" then
+      self.custom:SetCopper(copper)
+    end
+    self:Select(choice, true)
+  end
+  function picker:Read()
+    if self.choice == "none" then
+      return true, nil
+    elseif self.choice == "custom" then
+      local copper = self.custom:GetCopper()
+      return copper ~= nil, copper
+    end
+    return true, self.choice
+  end
+
+  picker:Select("none", true)
+  return picker
 end

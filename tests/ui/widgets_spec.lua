@@ -24,6 +24,23 @@ describe("Widgets", function()
       assert.are.equal("Tanaris ★ 5.0", W.escape("Tanaris\n★ 5.0")) -- other bytes, UTF-8 included, stay
     end)
 
+    it("keeps the glyphs the windows draw (R59): only ASCII controls are replaced, never UTF-8 bytes", function()
+      -- %c can match bytes 0x80-0x9F in a Latin-1 locale, and the glyphs below are
+      -- made of such bytes (★ is E2 98 85, ⚠ is E2 9A A0); a class of explicit
+      -- ASCII ranges cannot. The Latin-1 locale is tried where the machine has one
+      -- (this one may not, then the test pins the behaviour in the C locale).
+      local before = os.setlocale(nil, "ctype")
+      local latin1 = os.setlocale("en_US.ISO-8859-1", "ctype") or os.setlocale("C.ISO-8859-1", "ctype")
+      local ok, err = pcall(function()
+        assert.are.equal("★ ⚠ → ✓ ✗", W.escape("★ ⚠ → ✓ ✗"))
+        assert.are.equal("★ 4.8 ⚠ 2", W.escape("★\n4.8\0⚠\127" .. "2"))
+        assert.are.equal("    ", W.escape("\0\1\31\127"))
+        assert.are.equal("\128\145\159", W.escape("\128\145\159"))
+      end)
+      os.setlocale(before, "ctype")
+      assert.is_true(ok, tostring(err) .. (latin1 and "" or " (C locale)"))
+    end)
+
     it("setText escapes for font strings and buttons alike", function()
       local fs = parent:CreateFontString()
       W.setText(fs, "Evil|Name")

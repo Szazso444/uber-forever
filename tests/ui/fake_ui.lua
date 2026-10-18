@@ -10,6 +10,7 @@
 --   ui:click(button)                  -- OnClick (a disabled button ignores it), then PostClick hooks
 --   ui:visible(frame)                 -- shown, and so is every parent
 --   ui:find{kind = "Button", text = "Request"}   -- visible frames matching every given field
+--   ui:find{text = "Accept", within = frame}      -- ... that hang (at any depth) from `frame`
 --
 -- A frame made from SecureActionButtonTemplate is protected, and so are the
 -- frames it hangs from (its parents and what it is anchored to): changing one
@@ -20,6 +21,7 @@ local M = {}
 
 local UI_FILES = {
   "Widgets.lua", "MainWindow.lua", "StandList.lua", "MyStand.lua", "Clicking.lua", "History.lua", "MinimapButton.lua",
+  "Dialogs.lua", "GuardPanel.lua", "ArrivalWindow.lua", "ShiftEndWindow.lua", "SimControls.lua",
 }
 
 function M.new()
@@ -30,6 +32,8 @@ function M.new()
     casts = {}, -- spells a secure button cast: { spell, unit }
     tooltip = { lines = {}, shown = false },
     prints = {},
+    sounds = {}, -- the sound kit ids PlaySound was given
+    popups = {}, -- the Blizzard popups StaticPopup_FindVisible finds: which -> frame
   }
 
   local function checkText(text)
@@ -51,6 +55,9 @@ function M.new()
   function Region:SetWordWrap(on) self.wrap = on end
   function Region:SetWidth(w) self.width = w end
   function Region:SetSize(w, h) self.width, self.height = w, h end
+  function Region:SetHeight(h) self.height = h end
+  -- 12 points a line, a line per "\n": enough to lay a window out in a test.
+  function Region:GetStringHeight() return 12 * (select(2, (self.text or ""):gsub("\n", "\n")) + 1) end
   function Region:SetPoint(...) self.points = self.points or {}; self.points[#self.points + 1] = { ... } end
   function Region:ClearAllPoints() self.points = {} end
   function Region:SetAllPoints() end
@@ -94,6 +101,7 @@ function M.new()
   function Frame:SetWidth(w) protectedNow(self); self.width = w end
   function Frame:SetHeight(h) protectedNow(self); self.height = h end
   function Frame:GetWidth() return self.width or 0 end
+  function Frame:GetHeight() return self.height or 0 end
   function Frame:Show()
     protectedNow(self)
     local was = self.shown
@@ -167,6 +175,7 @@ function M.new()
     if f.template:find("BasicFrameTemplate", 1, true) then
       f.TitleText = f:CreateFontString()
       f.CloseButton = env.CreateFrame("Button", nil, f)
+      f.CloseButton.scripts.OnClick = function() f:Hide() end -- what the template's X does
     end
     if name then
       env[name] = f
@@ -184,6 +193,9 @@ function M.new()
   env.InCombatLockdown = function() return ui.combat end
   env.UnitAffectingCombat = function() return ui.combat end
   env.GetCursorPosition = function() return ui.cursor[1], ui.cursor[2] end
+  env.SOUNDKIT = { READY_CHECK = 8960, RAID_WARNING = 8959 }
+  env.PlaySound = function(kit) ui.sounds[#ui.sounds + 1] = kit end
+  env.StaticPopup_FindVisible = function(which) return ui.popups[which] end
   env.GameTooltip = {
     SetOwner = function(_, owner) ui.tooltip.owner = owner; ui.tooltip.lines = {} end,
     SetText = function(_, text) table.insert(ui.tooltip.lines, text) end,
@@ -213,13 +225,22 @@ function M.new()
     return true
   end
 
-  -- The visible frames that have every field of `want` (kind, text, name, ...).
+  -- The visible frames that have every field of `want` (kind, text, name, ...);
+  -- `within` is not a field: it limits the search to the frames hanging from that frame.
   function ui:find(want)
     local out = {}
     for _, f in ipairs(self.frames) do
       local ok = self:visible(f)
       for k, v in pairs(want) do
-        ok = ok and (k == "text" and f.GetText and f:GetText() or f[k]) == v
+        if k == "within" then
+          local up = f
+          while up and up ~= v do
+            up = up.parent
+          end
+          ok = ok and up ~= nil
+        else
+          ok = ok and (k == "text" and f.GetText and f:GetText() or f[k]) == v
+        end
       end
       if ok then
         out[#out + 1] = f
@@ -233,7 +254,7 @@ function M.new()
     local found = self:find(want)
     if #found ~= 1 then
       local parts = {}
-      for k, v in pairs(want) do parts[#parts + 1] = k .. "=" .. tostring(v) end
+      for k, v in pairs(want) do parts[#parts + 1] = k .. "=" .. (k == "within" and "<frame>" or tostring(v)) end
       error(#found .. " visible frames match " .. table.concat(parts, ", "), 2)
     end
     return found[1]
@@ -261,15 +282,19 @@ function M.new()
     if button.scripts.OnClick then
       button.scripts.OnClick(button, "LeftButton", false)
     end
+    for _, hook in ipairs(button.hooks.OnClick or {}) do
+      hook(button, "LeftButton", false)
+    end
     for _, hook in ipairs(button.hooks.PostClick or {}) do
       hook(button, "LeftButton", false)
     end
     return true
   end
 
-  -- Clicks the visible button with this text.
-  function ui:press(text)
-    return self:click(self:one{ kind = "Button", text = text })
+  -- Clicks the visible button with this text (the one inside `within`, when
+  -- a toast or dialog shows a button of the same name).
+  function ui:press(text, within)
+    return self:click(self:one{ kind = "Button", text = text, within = within })
   end
 
   -- A game event for every frame registered for it.
