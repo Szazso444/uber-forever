@@ -107,7 +107,6 @@ local function fakeWoW()
     local u = unit(token)
     if u then return u.name, u.realm end
   end
-  env.UnitIsUnit = function(a, b) return unit(a) ~= nil and unit(a) == unit(b) end
   env.UnitFactionGroup = function(token) return unit(token).faction end
   env.UnitLevel = function(token) return unit(token).level end
   env.UnitClass = function(token) local u = unit(token); return u.className, u.class end
@@ -471,6 +470,16 @@ describe("WoW game adapter", function()
         { "COMBAT_CHANGED", "Ana Smith", false },
         { "COMBAT_CHANGED", "Bo Lee", true },
       }, events)
+    end)
+
+    it("leaves my own raid unit to PLAYER_REGEN, without comparing units", function()
+      w.raid = true
+      w.units.raid1 = w.units.player
+      w.units.player.combat = true
+      env.UnitIsUnit = function() error("UnitIsUnit can return a secret in Forever") end
+      w.fire("UNIT_FLAGS", "raid1")
+      assert.are.same({}, events)
+      assert.are.same({}, logged)
     end)
 
     it("still reports a member leaving combat after the roster changed", function()

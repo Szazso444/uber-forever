@@ -533,13 +533,15 @@ end
 
 -- UNIT_FLAGS fires for many flags and units; only a group member's combat
 -- state changing is passed on. The last state is kept by name across roster
--- changes, so leaving combat right after one is still told.
+-- changes, so leaving combat right after one is still told. My own raid unit
+-- is told apart by name (UnitIsUnit can return a secret in Forever) and left
+-- to PLAYER_REGEN_*.
 EVENTS.UNIT_FLAGS = function(g, unit)
-  if not isGroupUnit(unit) or UnitIsUnit(unit, "player") then
+  if not isGroupUnit(unit) then
     return
   end
   local name = fullName(unit)
-  if name == nil then
+  if name == nil or Names.same(name, fullName("player")) then
     return
   end
   local fighting = UnitAffectingCombat(unit) == true

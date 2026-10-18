@@ -23,7 +23,6 @@ local wow_api = {
   "GetNormalizedRealmName",
   "UnitExists",
   "UnitName",
-  "UnitIsUnit",
   "UnitFactionGroup",
   "UnitLevel",
   "UnitClass",
