@@ -135,6 +135,30 @@ describe("alt ring", function()
   end)
 end)
 
+-- R66: a warlock and one alt in league log and rate 60 rides that never
+-- happened, each backdated to its own day, so each is two-sided.
+describe("backdated rides from one alt", function()
+  it("are one rider's one vote: a single two-sided rating's effect, still New", function()
+    local ns = Taxi.load()
+    local w = ns.World.new{seed = 9, start = 400000000}
+    local lock = w:addPlayer{name = "Bad Lock", class = "WARLOCK", level = 50, place = "searing"}
+    local alt = w:addPlayer{name = "Alt One", class = "MAGE", level = 20, place = "ironforge"}
+    local obs = w:addPlayer{name = "Fre Sh", class = "ROGUE", level = 44, place = "ironforge"}
+    local now = math.floor(w.clock:now())
+    for i = 1, 60 do
+      local id = ns.Ride.makeId("Bad Lock", "Alt One", now - i * 86400)
+      lock.engine:send("RIDE_LOG", {rideId = id, traveler = "Alt One"}, "CHANNEL")
+      alt.engine:send("RATING", {kind = "trust", target = "Bad Lock", stars = 5, id = id, ts = now - i * 86400}, "CHANNEL")
+    end
+    w:advance(200)
+    assert.are.equal(60, #trust(obs.db, "Bad Lock")) -- all kept
+    local s = obs.engine:summary("Bad Lock", "trust")
+    assert.is_near(scoreOf(ns, {{5, ns.Config.RATING.W_TWO_SIDED}}), s.score, 1e-9)
+    assert.is_true(s.isNew)
+    assert.are.same({}, w.errors)
+  end)
+end)
+
 describe("invented relays", function()
   local ns, w, obs, relayers, nobody, TS, ID
   before_each(function()

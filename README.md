@@ -80,11 +80,14 @@ one hop, weigh little, and are capped per relayer and in total; a
 relayer caught contradicting the real rater gets strikes and is ignored after
 three. A traveler who dies within two minutes of arriving counts as a heavy 1★
 against the warlock, but only when the death is corroborated. Scores include a
-prior, so one fresh 5★ cannot make a new warlock look perfect. **Known limits:**
-there is no central server, so a ring of alts can still rate each other (such
-ratings are strangers' with no shared history, and a rater's one-sided ratings
-of a warlock count together as one, so a fresh alt adds little); relays can be invented, which is why their total weight is
-capped; editing your own SavedVariables only fools yourself; two players may see
+prior, so one fresh 5★ cannot make a new warlock look perfect. One rider, one
+vote: of all the ratings one player gave a warlock, only the newest counts.
+**Known limits:** there is no central server, so a ring of alts can still rate
+each other: each alt is one vote, a full two-sided one if the warlock logs a
+ride for it, so a ring of five clears "New" and lifts the score as five real
+riders would (the ratings are strangers' with no shared history, and one honest
+1★ or one death weighs against them); relays can be invented, which is why
+their total weight is capped; editing your own SavedVariables only fools yourself; two players may see
 slightly different numbers until their addons sync; a crash before logout loses
 that session's new ratings; and the guard cannot see a mob that wanders onto the
 spot after you accept.

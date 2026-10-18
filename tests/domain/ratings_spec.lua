@@ -1324,15 +1324,40 @@ describe("Ratings", function()
         assert.are.equal(5, trustSummary().stars)
       end)
 
-      it("counts each of a rater's two-sided ratings, one per real ride", function()
+      it("counts only a rater's newest rating, two-sided ones too, at its own weight (R66)", function()
         rideLog("h1", "Bob Jones")
         rideLog("h2", "Bob Jones")
         assert.is_true(direct(trust("Bob Jones", 5, "h1", T0)))
         assert.is_true(direct(trust("Bob Jones", 3, "h2", T0 + DAY)))
-        assert.is_true(direct(trust("Bob Jones", 1, "h3", T0 + 2 * DAY)))
         local s = trustSummary()
-        near(round1((5 + 3 + 0.3 * 1) / 2.3), s.stars, "stars")
-        assert.are.equal(3, s.count)
+        assert.are.equal(3, s.stars)
+        near((5 * 3.5 + 1.0 * 3) / (5 + 1.0), s.score, "the newest, two-sided")
+        assert.are.equal(1, s.count)
+        assert.is_true(direct(trust("Bob Jones", 1, "h3", T0 + 2 * DAY))) -- no ride log names him for h3
+        s = trustSummary()
+        assert.are.equal(1, s.stars)
+        near((5 * 3.5 + 0.3 * 1) / (5 + 0.3), s.score, "the newest, one-sided")
+        assert.are.equal(3, #trustList(), "the older ones are kept")
+      end)
+
+      it("lets 60 backdated two-sided ratings from one alt and its warlock count as one (R66)", function()
+        for i = 1, 60 do
+          local id = "b" .. i
+          assert.is_true(R.addRideLog(db, "Ana Smith", id, T0 - i * DAY, "Alt One"))
+          assert.is_true(direct(trust("Alt One", 5, id, T0 - i * DAY)))
+        end
+        local s = trustSummary()
+        near((5 * 3.5 + 1.0 * 5) / (5 + 1.0), s.score, "one two-sided 5 star")
+        assert.are.same({true, 1}, {s.isNew, s.count})
+      end)
+
+      it("gives a rater who rated directly no extra weight from relayed copies of their other ratings (R66)", function()
+        assert.is_true(direct(trust("Bob Jones", 1, "h1", T0 + DAY)))
+        assert.is_true(R.addRelayed(db, trust("Bob Jones", 5, "h0", T0), "Rel Ay"))
+        near((5 * 3.5 + 0.3 * 1) / (5 + 0.3), trustSummary().score, "his own newest only")
+        -- Nor can a relayed copy dated after his own rating outvote it.
+        assert.is_true(R.addRelayed(db, trust("Bob Jones", 5, "h9", T0 + 5 * DAY), "Rel Ay"))
+        near((5 * 3.5 + 0.3 * 1) / (5 + 0.3), trustSummary().score, "still his own")
       end)
 
     end)

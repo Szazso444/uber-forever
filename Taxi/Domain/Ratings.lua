@@ -13,9 +13,9 @@ local _, ns = ...
 --   * a relayer whose copy was provably altered (same id and time as the
 --     rater's own rating, other stars) gets a strike, and one with
 --     STRIKES_MAX strikes is ignored;
---   * a rating counts in full only when the warlock's ride log names its
---     rater; all of one rater's other (one-sided) trust ratings count as one,
---     and so do all of a rater's direct share ratings;
+--   * one rider, one vote: of all a rater's direct ratings of a warlock only
+--     the newest counts, and a trust rating counts in full only when the
+--     warlock's ride log names its rater (else one-sided);
 --   * records dated ahead of the receiver's clock are refused;
 --   * a player caught lying is ignored altogether;
 --   * a death after a summon weighs heavily.
@@ -643,13 +643,14 @@ end
 --                   trust). Second-hand records and receipts never clear it.
 --   deathsReported  deaths counted against the warlock, heavy or light
 -- Weights:
---   * a direct trust rating is two-sided (W_TWO_SIDED) only when the
---     warlock's ride log for its id names its rater as the traveler, else
---     one-sided (W_ONE_SIDED); all of one rater's one-sided ratings together
---     count as one, the newest, and the rest weigh nothing (but are kept);
---   * all of one rater's direct share ratings together count as one, the
---     newest, at W_TWO_SIDED; the rest weigh nothing (but are kept);
---   * a relayed rating or light death with relayers weighs what weighRelayed
+--   * one rider, one vote (R66): of one rater's direct ratings of a warlock
+--     (per kind) only the newest counts; the rest weigh nothing (but are kept);
+--   * that trust rating is two-sided (W_TWO_SIDED) when the warlock's ride log
+--     for its id names its rater as the traveler, else one-sided
+--     (W_ONE_SIDED); that share rating weighs W_TWO_SIDED;
+--   * a relayed rating weighs what weighRelayed leaves it, and nothing when
+--     its rater's own direct rating is here (that rater has voted);
+--   * a light death with relayers weighs what weighRelayed
 --     leaves it; a light death nobody relayed (seen first hand) weighs
 --     W_RELAYED, or W_ONE_SIDED when it is the victim's own unproven report
 --     (source "self", R48; direct, so outside the relay caps); a heavy death
@@ -676,14 +677,13 @@ function M.summary(db, target, kind)
     local list = stored(db, name, kind)
     local logs = sub(db, "rideLogs", name)
 
-    -- A rater's direct share ratings, and their direct one-sided trust ratings
-    -- (the ride log does not name them), count once: only the newest does.
-    local function countsOnce(r)
-      return kind == "share" or not namesRater(logs, r)
-    end
+    -- One rider, one vote (R66): of a rater's direct ratings of this warlock
+    -- only the newest counts, at its own weight; the older ones stay on file
+    -- and weigh nothing. So a rater and a warlock in league can't mint weight
+    -- by backdating ride after ride.
     local newest = {}
     for _, r in ipairs(list) do
-      if validRating(r, kind) and r.via == nil and not isLiar(db, r.rater) and countsOnce(r) then
+      if validRating(r, kind) and r.via == nil and not isLiar(db, r.rater) then
         local best = newest[r.rater]
         if best == nil or r.ts > best.ts or (r.ts == best.ts and r.id > best.id) then
           newest[r.rater] = r
@@ -694,18 +694,16 @@ function M.summary(db, target, kind)
     for _, r in ipairs(list) do
       if validRating(r, kind) and not isLiar(db, r.rater) then
         if r.via == nil then
-          local weight
-          if not countsOnce(r) then
-            weight = C.W_TWO_SIDED
-          elseif newest[r.rater] == r then
-            weight = kind == "share" and C.W_TWO_SIDED or C.W_ONE_SIDED
-          end
-          if weight then
-            entries[#entries + 1] = { stars = r.stars, weight = weight }
+          if newest[r.rater] == r then
+            local twoSided = kind == "share" or namesRater(logs, r)
+            entries[#entries + 1] = { stars = r.stars, weight = twoSided and C.W_TWO_SIDED or C.W_ONE_SIDED }
             ratings, directRatings = ratings + 1, directRatings + 1
             seen(r.id)
           end
-        elseif type(r.via) == "table" then
+        elseif type(r.via) == "table" and newest[r.rater] == nil then
+          -- Second-hand copies count only for a rater whose own rating this
+          -- client does not hold: one who rated directly has voted, and a
+          -- relayed record (cheap to invent) can't outvote that.
           local live = liveRelayers(db, r.via)
           if #live > 0 then
             local e = {
