@@ -444,6 +444,65 @@ describe("a real death and the warlock's ride log (R48)", function()
   end)
 end)
 
+-- R65: the zone a stand's message names is the sender's text; every client
+-- shows and checks its own name for the stand's map instead.
+describe("a stand that lies about its zone", function()
+  local ns, w
+  before_each(function()
+    ns = Taxi.load(); w = ns.World.new{seed = 7, start = 300000}
+  end)
+  after_each(function() assert.are.same({}, w.errors) end)
+
+  -- target gets five 5-star ratings in db, so the trust check passes.
+  local function trusted(db, target, now)
+    for i = 1, 5 do
+      local rater = "Hap Py" .. string.char(96 + i)
+      local id = ns.Ride.makeId(target, rater, now - 1000 - i)
+      assert(ns.Ratings.addDirect(db, {kind = "trust", rater = rater, target = target, stars = 5,
+        id = id, ts = now - 900 - i}, rater, now))
+    end
+  end
+
+  -- The traveler books the stand, joins the group and is offered the summon.
+  local function summoned(lock, t, stand)
+    assert(t.engine:requestRide(stand.standId, 0)); w:advance(2)
+    assert.is_string(lock.engine:acceptRequest(t.name .. "#" .. stand.standId)); w:advance(2)
+    assert.is_true(w:acceptInvite(t.name)); w:advance(2)
+    w:offerSummon(lock.name, t.name); w:advance(1)
+    return last(t, "GUARD_VERDICT")[2]
+  end
+
+  it("is listed and judged at the zone of its real map, with the wire subzone as a hint", function()
+    local lock = w:addPlayer{name = "Bad Lock", class = "WARLOCK", level = 50, place = "searing",
+      zoneText = "Ironforge", subzoneText = "The Commons"}
+    local t = w:addPlayer{name = "Tra Vel", class = "HUNTER", level = 50, place = "ironforge"}
+    trusted(t.db, "Bad Lock", w.clock:now())
+    local stand = assert(lock.engine:openStand{kind = "lock"}); w:advance(2)
+    local view = ns.Board.get(t.engine.board, stand.standId, w.clock:now())
+    assert.are.same({"Searing Gorge", "The Commons", 1427, "Ironforge"}, {view.zone, view.subzone, view.mapID, view.wireZone})
+    assert.are.same({view}, ns.Board.list(t.engine.board, {zone = "Searing Gorge"}))
+    assert.are.same({}, ns.Board.list(t.engine.board, {zone = "Ironforge"}))
+    -- The summon goes where the list said; the guard agreed to Searing Gorge.
+    local verdict = summoned(lock, t, stand)
+    assert.are.equal("Destination: Searing Gorge", check(verdict, "area").text)
+    assert.is_true(check(verdict, "area").ok)
+    assert.is_true(w:acceptSummon("Tra Vel"))
+    assert.are.equal("searing", t.place)
+  end)
+
+  it("an honest stand is GREEN for a traveler whose client names the zone in another language", function()
+    local lock = w:addPlayer{name = "Hon Lock", class = "WARLOCK", level = 50, place = "ironforge"}
+    local t = w:addPlayer{name = "Ute Berg", class = "HUNTER", level = 50, place = "gadgetzan", locale = "deDE"}
+    trusted(t.db, "Hon Lock", w.clock:now())
+    local stand = assert(lock.engine:openStand{kind = "lock"}); w:advance(2)
+    local view = ns.Board.get(t.engine.board, stand.standId, w.clock:now())
+    assert.are.same({"Eisenschmiede", "Ironforge"}, {view.zone, view.wireZone})
+    local verdict = summoned(lock, t, stand)
+    assert.are.equal("GREEN", verdict.level)
+    assert.are.equal("Destination: Eisenschmiede", check(verdict, "area").text)
+  end)
+end)
+
 describe("stingy warlock", function()
   local ns, w, lock, c1, c2, t, stand
   before_each(function()

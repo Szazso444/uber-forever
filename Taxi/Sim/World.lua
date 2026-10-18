@@ -96,9 +96,11 @@ end
 -- o: name, faction ("Alliance"), class ("WARRIOR"), level (60), guild, place
 -- ("ironforge"), money (0, copper), locale ("enUS"; "deDE" names Ironforge
 -- "Eisenschmiede"), hardcore (true unless false), channelsFull (joining the
--- channel fails), shards (soul shards; 10 for a warlock, else 0), db (reuse a
--- TaxiDB; default a fresh Store.init(nil)), charDb. The engine is started
--- before addPlayer returns, with p.events already recording.
+-- channel fails), shards (soul shards; 10 for a warlock, else 0), zoneText and
+-- subzoneText (the zone / subzone text the player's game reports wherever they
+-- are, so their stand advertises it: a liar's; the map stays the real one), db
+-- (reuse a TaxiDB; default a fresh Store.init(nil)), charDb. The engine is
+-- started before addPlayer returns, with p.events already recording.
 function World:addPlayer(o)
   local name = o.name
   local placeKey = o.place or "ironforge"
@@ -117,6 +119,8 @@ function World:addPlayer(o)
     hardcore = o.hardcore ~= false,
     channelsFull = o.channelsFull == true,
     shards = o.shards or (o.class == "WARLOCK" and 10 or 0),
+    zoneText = o.zoneText,
+    subzoneText = o.subzoneText,
     dead = false,
     combat = false,
     events = {},

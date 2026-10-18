@@ -359,13 +359,16 @@ local function ownsId(standId, sender)
   return standId:sub(1, #prefix) == prefix
 end
 
--- A stand heartbeat. The owner is the sender the server stamped.
+-- A stand heartbeat. The owner is the sender the server stamped. The stand's
+-- zone is this client's own name for its map, never the sender's text when
+-- there is one (R65).
 Engine.handlers.STAND = function(e, msg, sender)
   if not ownsId(msg.standId, sender) then
     return
   end
   local now = e.clock:now()
-  Board.upsert(e.board, Stand.fromFields(msg, sender, now), now)
+  local localZone = e.game:mapName(msg.mapID)
+  Board.upsert(e.board, Stand.fromFields(msg, sender, now, localZone), now)
   e:emit("BOARD_CHANGED")
 end
 

@@ -335,8 +335,10 @@ local function guardFacts(e, summon, ride)
   -- the live view, which then has that very place anyway.
   local moved = standMoved(e, ride)
   local stand = moved and ride.stand or standOf(e, ride)
+  -- The zone the message named, and my own name for the stand's map: the
+  -- guard trusts the wire text only when my client has no name for it (R65).
   f.agreedWarlock = ride.driver
-  f.standZone, f.standSubzone, f.standMapID = stand.zone, stand.subzone, stand.mapID
+  f.standZone, f.standSubzone, f.standMapID = stand.wireZone or stand.zone, stand.subzone, stand.mapID
   f.standZoneLocal = stand.mapID ~= nil and game:mapName(stand.mapID) or nil
   f.warlockInGroup = e:inGroup(ride.driver)
   if f.warlockInGroup then

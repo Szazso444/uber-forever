@@ -53,12 +53,15 @@ local function checkSummoner(f)
 end
 
 -- The summon names a destination area in the player's own language, so it is
--- compared with the stand's localized zone, its English zone and its subzone.
--- Exact match after trimming; a nil candidate is never equal to a real area.
+-- compared with the stand's zone and its subzone. The zone is the player's own
+-- name for the stand's map (standZoneLocal); the zone text the stand's message
+-- carried (standZone) is the sender's word and counts only when the player's
+-- client has no name for that map (R65). Exact match after trimming; a nil
+-- candidate is never equal to a real area.
 local function checkArea(f)
   local area = clean(f.areaName)
-  local ok = area ~= nil
-    and (area == clean(f.standZoneLocal) or area == clean(f.standZone) or area == clean(f.standSubzone))
+  local zone = clean(f.standZoneLocal) or clean(f.standZone)
+  local ok = area ~= nil and (area == zone or area == clean(f.standSubzone))
   if ok then
     return item("area", true, "RED", L.fmt("GUARD_AREA_OK", area))
   end

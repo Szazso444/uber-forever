@@ -228,12 +228,23 @@ end
 -- A received stand as the Board keeps it: every STAND field, plus the owner and
 -- when it was heard. `sender` is the name the server stamped on the message, so
 -- the owner never comes from `f`, whatever it claims.
-function M.fromFields(f, sender, now)
+--
+-- The zone is only the sender's text, and a sender can write anything there
+-- (R65). `localZone` is the receiver's own name for the stand's mapID
+-- (game:mapName); when there is one it is the stand's zone, shown and checked
+-- everywhere, and the wire text is kept aside as wireZone. Without one (nil or
+-- blank) the wire text is all there is. The subzone stays wire text: a hint.
+function M.fromFields(f, sender, now, localZone)
   local view = {}
   for _, name in ipairs(WIRE_FIELDS) do
     view[name] = f[name]
   end
   view.portals = type(f.portals) == "table" and ns.Util.copy(f.portals) or {}
+  view.wireZone = f.zone
+  local trimmed = ns.Util.trim(localZone)
+  if trimmed ~= nil and trimmed ~= "" then
+    view.zone = trimmed
+  end
   view.owner = sender
   view.seenAt = now
   return view

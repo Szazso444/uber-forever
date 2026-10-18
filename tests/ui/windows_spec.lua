@@ -413,6 +413,24 @@ describe("windows", function()
       assert.is_true(ui:shows("Dar Kbolt"))
     end)
 
+    it("shows and filters a stand by its map's zone, not the zone its message names (R65)", function()
+      local liar = w:addPlayer{ name = "Lia Rlock", class = "WARLOCK", level = 45, place = "searing",
+        zoneText = "Ironforge", subzoneText = "The Commons" }
+      standOf(liar)
+      Main:Show()
+      local view = Main.views.travel
+      assert.are.equal("Searing Gorge - The Commons", view.list.rows[1].sub:GetText())
+      assert.is_false(ui:shows("Ironforge - The Commons"))
+      ui:click(view.list.rows[1])
+      assert.is_true(ui:shows("Lia Rlock - Searing Gorge - The Commons"))
+      ui:click(view.dropdown)
+      assert.are.same({}, ui:find{ kind = "FontString", text = "Ironforge" })
+      ui:click(ui:one{ kind = "FontString", text = "Searing Gorge" }.parent)
+      assert.is_true(ui:shows("Lia Rlock"))
+      ui:press("Request")
+      assert.is_true(ui:shows("Searing Gorge - The Commons")) -- the request dialog
+    end)
+
     it("drops a stand that went quiet at its TTL without waiting for the 30 s sweep (R51)", function()
       standOf(lock)
       Main:Show()

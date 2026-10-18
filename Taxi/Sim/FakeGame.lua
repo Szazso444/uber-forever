@@ -81,7 +81,9 @@ end
 -- Location -----------------------------------------------------------------------
 
 -- The zone is in the player's language, as the game shows it; the subzone is
--- always English here.
+-- always English here. A player made with zoneText / subzoneText reports that
+-- text instead, wherever they are: a lying addon whose stand names a zone its
+-- map is not in (R65).
 function Game:location()
   local p = self.p
   local place = places()[p.place]
@@ -91,8 +93,8 @@ function Game:location()
     y = 0.5 + p.dy / 1000,
     wx = place.wx + p.dx,
     wy = place.wy + p.dy,
-    zone = self:mapName(place.mapID),
-    subzone = place.subzone,
+    zone = p.zoneText or self:mapName(place.mapID),
+    subzone = p.subzoneText or place.subzone,
     inInstance = place.inInstance == true,
   }
 end

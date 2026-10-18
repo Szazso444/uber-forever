@@ -175,6 +175,16 @@ describe("SummonGuard", function()
       assert.are.equal("GREEN", G.evaluate(f).level)
     end)
 
+    it("ignores the wire zone when the stand's map has a local name (R65)", function()
+      -- A stand on the Searing Gorge map whose message says "Ironforge".
+      local v = G.evaluate(with{ areaName = "Ironforge", standZone = "Ironforge",
+        standZoneLocal = "Searing Gorge", standSubzone = "Thorium Point" })
+      assert.are.equal("RED", v.level)
+      assert.are.equal("Destination: Ironforge (agreed: Searing Gorge)", check(v, "area").text)
+      assert.are.equal("GREEN", G.evaluate(with{ areaName = "Searing Gorge", standZone = "Ironforge",
+        standZoneLocal = "Searing Gorge", standSubzone = "Thorium Point" }).level)
+    end)
+
     it("matches the subzone alone", function()
       local f = without("standZone", "standZoneLocal")
       f.areaName, f.standSubzone = "Gadgetzan", "Gadgetzan"

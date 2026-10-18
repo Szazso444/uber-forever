@@ -121,6 +121,13 @@ describe("World", function()
       assert.are.same({}, {en.game:zoneLevels(9999)})
     end)
 
+    it("can report a lying zone text, which leaves the map and its name alone", function()
+      local liar = add("Lia R", {place = "searing", zoneText = "Ironforge", subzoneText = "The Commons"})
+      local loc = liar.game:location()
+      assert.are.same({1427, "Ironforge", "The Commons"}, {loc.mapID, loc.zone, loc.subzone})
+      assert.are.equal("Searing Gorge", liar.game:mapName(1427))
+    end)
+
     it("moveTo sends MOVED and locks the player down while in an instance", function()
       local seen = listen("MOVED")
       local p = add("Ana Smith")

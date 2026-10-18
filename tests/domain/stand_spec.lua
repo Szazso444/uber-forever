@@ -371,6 +371,17 @@ describe("Stand", function()
       assert.is_nil(v.author)
     end)
 
+    it("shows the receiver's own name for the stand's map, keeping the wire zone aside (R65)", function()
+      local f = S.toFields(lock())
+      f.zone = "Ironforge"
+      local v = S.fromFields(f, "Real Sender", 5, "Searing Gorge")
+      assert.are.same({"Searing Gorge", "Ironforge"}, {v.zone, v.wireZone})
+      v = S.fromFields(f, "Real Sender", 5, nil) -- no local name for the map: the wire text
+      assert.are.same({"Ironforge", "Ironforge"}, {v.zone, v.wireZone})
+      v = S.fromFields(f, "Real Sender", 5, "  ") -- a blank name is no name
+      assert.are.equal("Ironforge", v.zone)
+    end)
+
     it("gives the view a table for portals even when the field is missing", function()
       local f = S.toFields(lock()); f.portals = nil
       assert.are.same({}, S.fromFields(f, "Real Sender", 5).portals)
