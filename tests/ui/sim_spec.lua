@@ -359,6 +359,11 @@ describe("/taxi sim", function()
       ui:press("Trade tip")
       pass(3)
       assert.are.equal("done", ns.engine.rides["You#" .. Sim.state.dar.engine.stand.standId].state)
+      -- With the ride over, a stranger's summon is just no Taxi ride: YELLOW.
+      ui:press("Offer stranger summon")
+      assert.is_true(ui:shows("Summon Guard: YELLOW - be careful"))
+      assert.is_true(ui:shows("✗ Not a Taxi ride: Stan Ger → Searing Gorge"))
+      ui:press("Accept summon")
       -- 2. Another ride, still in his group: RED wrong place, declined; a stranger; then GREEN again.
       ui:click(window("You arrived").CloseButton)
       ui:click(row(1).buttons[1])
