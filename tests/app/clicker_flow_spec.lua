@@ -156,7 +156,7 @@ describe("clicker flow", function()
     lock.engine:acceptRequest("Tra Veler#" .. s.standId); w:advance(2)
     w:acceptInvite("Tra Veler"); w:advance(1)
     assert.are.same({"Tra Veler"}, s.travelers)
-    w:offerSummon("Dar Kbolt", "Tra Veler"); w:acceptSummon("Tra Veler"); w:advance(2)
+    lock.engine:nextTraveler(); w:offerSummon("Dar Kbolt", "Tra Veler"); w:acceptSummon("Tra Veler"); w:advance(2)
     assert.is_true(t.engine:stayAndClick(ride.rideId)); w:advance(2)
     local neg = last(lock, "CLICKER_APPLIED")[2]
     assert.are.same({"Tra Veler", 30}, {neg.clicker, neg.askedPct})

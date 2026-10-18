@@ -82,6 +82,19 @@ describe("portal flow", function()
     assert.are.same({}, wireOf(ns, w, "RIDE_LOG")) -- nothing to rate, so nothing to prove
   end)
 
+  it("Open portal moves the mage's ride to portal; an ARRIVED before that is ignored (R52)", function()
+    local s, ride = grouped()
+    local mine = mage.engine.rides["Tra Veler#" .. s.standId]
+    t.engine:send("ARRIVED", {rideId = ride.rideId, warlock = "Mag Ister"}, "WHISPER", "Mag Ister"); w:advance(2)
+    assert.are.equal("grouped", mine.state)
+    assert.are.equal("Tra Veler", mage.engine:nextTraveler())
+    assert.are.equal("portal", mine.state)
+    w:advance(1)
+    assert.is_true(w:castPortal("Mag Ister", "stormwind"))
+    assert.is_true(w:usePortal("Tra Veler", "stormwind")); w:advance(2)
+    assert.are.equal("arrived", mine.state)
+  end)
+
   it("stars rejected for portal rides", function()
     local _, ride = grouped()
     mage.engine:nextTraveler(); w:advance(1)

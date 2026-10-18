@@ -68,14 +68,14 @@ describe("message loss", function()
 
   -- The players act as they would: the warlock accepts a request that reaches
   -- him, the traveler takes the invite once the warlock has sent it, and the
-  -- warlock summons him once he is in the group.
+  -- warlock presses Summon next and summons him once he is in the group.
   local function play(seconds)
     for _ = 1, seconds do
       local mine, theirs = lock.engine.rides[key], t.engine.rides[key]
       if mine ~= nil and mine.state == "requested" then lock.engine:acceptRequest(key) end
       if mine ~= nil and mine.state == "accepted" and t.invitedBy ~= nil then w:acceptInvite(t.name) end
       if theirs.state == "grouped" then
-        w:offerSummon(lock.name, t.name); w:acceptSummon(t.name)
+        lock.engine:nextTraveler(); w:offerSummon(lock.name, t.name); w:acceptSummon(t.name)
       end
       w:advance(1)
     end

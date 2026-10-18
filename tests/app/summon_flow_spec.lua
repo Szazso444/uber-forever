@@ -60,7 +60,7 @@ describe("summon flow", function()
     local s = crewUp(); assert.are.equal("live", ns.Stand.status(lock.engine.stand))
     t.engine:requestRide(s.standId, 10000); w:advance(2)
     local key = "Tra Veler#"..s.standId; lock.engine:acceptRequest(key); w:advance(2); w:acceptInvite("Tra Veler"); w:advance(2)
-    w:offerSummon("Dar Kbolt", "Tra Veler"); w:advance(1)
+    lock.engine:nextTraveler(); w:offerSummon("Dar Kbolt", "Tra Veler"); w:advance(1)
     local verdict = t.events[#t.events]; assert.are.equal("GUARD_VERDICT", verdict[1]); assert.are.equal("GREEN", verdict[2].level)
     w:acceptSummon("Tra Veler"); w:advance(2)
     local rideId = t.engine.rides[key] and t.engine.rides[key].rideId
@@ -231,7 +231,7 @@ describe("summon flow", function()
     local key = "Tra Veler#"..s.standId
     t.engine:requestRide(s.standId, 10000); w:advance(2)
     lock.engine:acceptRequest(key); w:advance(2); w:acceptInvite("Tra Veler"); w:advance(2)
-    w:offerSummon("Dar Kbolt", "Tra Veler"); w:acceptSummon("Tra Veler"); w:advance(2)
+    lock.engine:nextTraveler(); w:offerSummon("Dar Kbolt", "Tra Veler"); w:acceptSummon("Tra Veler"); w:advance(2)
     local rideId = t.engine.rides[key].rideId
     assert.is_true(t.engine:submitArrival(rideId, nil, 10000))
     assert.are.equal("Dar Kbolt", t.tradeWith); assert.are.equal(10000, t.tradeMoney)
@@ -505,6 +505,41 @@ describe("Driver", function()
     assert.are.equal("Tre Two", lock.engine:nextTraveler())
   end)
 
+  it("Summon next moves the ride to summoning, and only then does its ARRIVED log the ride (R52)", function()
+    local s = lock.engine:openStand{kind = "lock"}; w:advance(1)
+    local mine, ride = grouped(t, s)
+    assert.are.equal("grouped", mine.state)
+    -- An ARRIVED for a ride nobody summoned is not an arrival: no log, no RIDE_LOG.
+    t.engine:send("ARRIVED", {rideId = ride.rideId, warlock = "Dar Kbolt"}, "WHISPER", "Dar Kbolt"); w:advance(2)
+    assert.are.equal("grouped", mine.state)
+    assert.is_nil(lock.db.rideLogs["Dar Kbolt"])
+    assert.are.same({}, wireOf(ns, w, "RIDE_LOG", "Dar Kbolt"))
+    -- The button press: the ride is summoning, and stays the one the button is for.
+    assert.are.equal("Tra Veler", lock.engine:nextTraveler())
+    assert.are.equal("summoning", mine.state)
+    assert.are.equal(mine, lock.engine:nextRide())
+    assert.are.equal("Tra Veler", lock.engine:nextTraveler()) -- pressed again: summoning still
+    assert.are.equal("summoning", mine.state)
+    w:offerSummon("Dar Kbolt", "Tra Veler"); w:acceptSummon("Tra Veler"); w:advance(2)
+    assert.are.equal("arrived", mine.state)
+    assert.are.equal("Tra Veler", lock.db.rideLogs["Dar Kbolt"][ride.rideId].traveler)
+    assert.are.equal(1, #wireOf(ns, w, "RIDE_LOG", "Dar Kbolt"))
+  end)
+
+  it("files its own ride log the way a heard one is filed, through the witness (R52)", function()
+    local s = lock.engine:openStand{kind = "lock"}; w:advance(1)
+    local _, ride = grouped(t, s)
+    local corroborated = {}
+    local corroborate = lock.engine.witness.corroborate
+    lock.engine.witness.corroborate = function(self, warlock, rideId, now)
+      corroborated[#corroborated + 1] = {warlock, rideId}
+      return corroborate(self, warlock, rideId, now)
+    end
+    lock.engine:nextTraveler()
+    w:offerSummon("Dar Kbolt", "Tra Veler"); w:acceptSummon("Tra Veler"); w:advance(2)
+    assert.are.same({{"Dar Kbolt", ride.rideId}}, corroborated) -- once, for the two ARRIVED copies (R50)
+  end)
+
   it("nextRide names the ride the Summon next button is for and sends nothing", function()
     local s = lock.engine:openStand{kind = "lock"}; w:advance(1)
     assert.is_nil(lock.engine:nextRide())
@@ -533,6 +568,7 @@ describe("Driver", function()
     hear("Cee One", "TIP", {rideId = mine.rideId, amount = 999}, "PARTY")         -- not the ride's traveler
     hear("Tra Veler", "TIP", {rideId = "Dar Kbolt@Tra Veler@1", amount = 999}, "PARTY") -- not a ride of mine
     hear("Tra Veler", "TIP", {rideId = mine.rideId, amount = 10000}, "PARTY")     -- before the ARRIVED
+    lock.engine:nextTraveler() -- Summon next (R52)
     hear("Tra Veler", "ARRIVED", {rideId = mine.rideId, warlock = "Dar Kbolt"}, "CHANNEL")
     assert.are.equal("arrived", mine.state)
     w:trade("Tra Veler", "Dar Kbolt", 10000); w:advance(1)
@@ -824,7 +860,7 @@ describe("Traveler", function()
   describe("ARRIVED goes to the channel and by whisper to the driver (R50)", function()
     it("sends the same ARRIVED twice, once to each", function()
       local _, ride = grouped()
-      w:offerSummon("Dar Kbolt", "Tra Veler"); w:acceptSummon("Tra Veler"); w:advance(1)
+      lock.engine:nextTraveler(); w:offerSummon("Dar Kbolt", "Tra Veler"); w:acceptSummon("Tra Veler"); w:advance(1)
       local sent = wireOf(ns, w, "ARRIVED", "Tra Veler")
       assert.are.equal(2, #sent)
       assert.are.same({ride.rideId, "Dar Kbolt", "CHANNEL"}, {sent[1].rideId, sent[1].warlock, sent[1].dist})
@@ -838,7 +874,7 @@ describe("Traveler", function()
         if msgType == "ARRIVED" and dist == "CHANNEL" then return nil, "lost" end
         return send(e, msgType, fields, dist, ...)
       end
-      w:offerSummon("Dar Kbolt", "Tra Veler"); w:acceptSummon("Tra Veler"); w:advance(2)
+      lock.engine:nextTraveler(); w:offerSummon("Dar Kbolt", "Tra Veler"); w:acceptSummon("Tra Veler"); w:advance(2)
       local mine = lock.engine.rides["Tra Veler#" .. ride.standId]
       assert.are.equal("arrived", mine.state)
       assert.are.equal("Tra Veler", lock.db.rideLogs["Dar Kbolt"][ride.rideId].traveler)
@@ -849,7 +885,7 @@ describe("Traveler", function()
 
     it("a driver hearing it twice logs and answers once, and keeps the first receipt time", function()
       local _, ride = grouped()
-      w:offerSummon("Dar Kbolt", "Tra Veler"); w:acceptSummon("Tra Veler"); w:advance(2)
+      lock.engine:nextTraveler(); w:offerSummon("Dar Kbolt", "Tra Veler"); w:acceptSummon("Tra Veler"); w:advance(2)
       local arrivedAt = lock.engine.rides["Tra Veler#" .. ride.standId].times.arrived
       local changes = #emitted(lock, "RIDE_CHANGED")
       lock.engine:handle(assert(ns.Protocol.decode(ns.Protocol.encode("ARRIVED", "t9", {rideId = ride.rideId, warlock = "Dar Kbolt"}))), "Tra Veler", "WHISPER")
@@ -861,7 +897,7 @@ describe("Traveler", function()
 
     it("every other listener is idempotent too: a repeat keeps the receipt time and the arrival", function()
       local _, ride = grouped()
-      w:offerSummon("Dar Kbolt", "Tra Veler"); w:acceptSummon("Tra Veler"); w:advance(2)
+      lock.engine:nextTraveler(); w:offerSummon("Dar Kbolt", "Tra Veler"); w:acceptSummon("Tra Veler"); w:advance(2)
       local receipt = lock.db.receipts["Dar Kbolt"][ride.rideId]
       local arrival = lock.engine.witness.rides[ride.rideId].arrivedTs
       w:advance(20)
@@ -1032,7 +1068,7 @@ describe("Traveler", function()
 
   it("sends TIP to the group after the trade and finishes the ride", function()
     local _, ride = grouped()
-    w:offerSummon("Dar Kbolt", "Tra Veler"); w:acceptSummon("Tra Veler"); w:advance(1)
+    lock.engine:nextTraveler(); w:offerSummon("Dar Kbolt", "Tra Veler"); w:acceptSummon("Tra Veler"); w:advance(1)
     assert.is_true(t.engine:submitArrival(ride.rideId, nil, 5000))
     w:trade("Tra Veler", "Dar Kbolt", 5000); w:advance(1)
     assert.are.equal("done", ride.state)

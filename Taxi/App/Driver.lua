@@ -18,7 +18,7 @@ local _, ns = ...
 --
 -- Pure Lua: no WoW API (this file is also loaded in-game for /taxi sim).
 local Engine, Config, Names = ns.Engine, ns.Config, ns.Names
-local Stand, Ride, Negotiation, Ledger, Ratings = ns.Stand, ns.Ride, ns.Negotiation, ns.Ledger, ns.Ratings
+local Stand, Ride, Negotiation, Ledger = ns.Stand, ns.Ride, ns.Negotiation, ns.Ledger
 
 local LOCK_LEVEL = 20 -- Ritual of Summoning is learned at 20
 local INVITE_TIMEOUT = 60 -- seconds an accepted traveler has to join the group
@@ -437,10 +437,14 @@ Engine.declineRequest = Engine.action(function(e, key, reason)
 end)
 
 -- The ride the "Summon next" (or "Open portal") button is for: the first ride
--- in accept order whose traveler is in my group and not yet there. A ride stays
--- first until it arrives or ends. Sends nothing, so the UI can ask on every
--- refresh to aim its secure button (only rides that ended are dropped from the
--- queue). Returns the ride, or nil when nobody is waiting.
+-- in accept order whose traveler is in my group and not yet there (grouped,
+-- or summoning / portal once the button was pressed for it). A ride stays
+-- first until it arrives or ends, so a failed summon is cast again at the same
+-- traveler. Sends nothing, so the UI can ask on every refresh to aim its secure
+-- button (only rides that ended are dropped from the queue). Returns the ride,
+-- or nil when nobody is waiting.
+local AWAITING = { grouped = true, summoning = true, portal = true }
+
 function Engine:nextRide()
   local stand = self.stand
   if stand == nil then
@@ -454,20 +458,26 @@ function Engine:nextRide()
     end
   end
   for _, ride in ipairs(queue) do
-    if ride.state == "grouped" then
+    if AWAITING[ride.state] then
       return ride
     end
   end
   return nil
 end
 
--- The traveler nextRide names, for the player's click on that button.
+-- The traveler nextRide names, for the player's click on that button. The
+-- click is what moves my ride on (R52): a summon ride to summoning, a portal
+-- ride to portal; only a ride I summoned or opened a portal for can arrive.
 -- PORTAL_UP goes to the group, so the clickers (or a mage's travelers) know to
 -- click. Returns the name, or nil when nobody is waiting.
 Engine.nextTraveler = Engine.action(function(e)
   local ride = e:nextRide()
   if ride == nil then
     return nil
+  end
+  if ride.state == "grouped" then
+    Ride.apply(ride, ride.kind == "summon" and "SUMMON_OFFERED" or "PORTAL_UP", e.clock:now())
+    e:emit("RIDE_CHANGED", ride)
   end
   e:send("PORTAL_UP", { dest = ride.dest }, e:groupDist())
   return ride.traveler
@@ -476,7 +486,6 @@ end)
 -- Group changes: an accepted traveler who joined is grouped; a seated
 -- traveler who left gives up the seat, and a ride that hadn't arrived is
 -- cancelled. A clicker seen in my group who is gone now leaves the stand.
-local AWAITING = { grouped = true, summoning = true, portal = true }
 
 -- A clicker leaves the stand: their shift ends in my ledger. When `tell`, the
 -- owner sent them away and CLICK_NO tells their addon the shift is over.
@@ -525,7 +534,11 @@ end
 
 -- Arrival and tips ----------------------------------------------------------------------
 
--- One of my travelers arrived. A summon ride is logged and the log goes out as
+-- One of my travelers arrived. Only a ride I summoned or opened a portal for
+-- (summoning or portal, see nextTraveler) can arrive (R52): a traveler who was
+-- merely grouped gets no ride log, so a throwaway can't get one to back a
+-- death it then claims. A summon ride is logged, through the path that files a
+-- heard log (fileRideLog: my own witness hears it too), and the log goes out as
 -- RIDE_LOG, the proof that makes the traveler's rating two-sided (portal rides
 -- are never rated). A TIP heard before the arrival now counts for the shifts
 -- the arrival falls in (R39).
@@ -538,16 +551,11 @@ Engine.handlers.ARRIVED = function(e, msg, sender)
     return
   end
   local now = e.clock:now()
-  if ride.state == "grouped" then
-    Ride.apply(ride, ride.kind == "summon" and "SUMMON_OFFERED" or "PORTAL_UP", now)
-  end
   if not Ride.apply(ride, "ARRIVED", now) then
     return
   end
   if ride.kind == "summon" then
-    if Ratings.addRideLog(e.db, e.me, ride.rideId, now, ride.traveler, now) then
-      e.dirty = true
-    end
+    e:fileRideLog(e.me, ride.rideId, now, ride.traveler, now)
     e:send("RIDE_LOG", { rideId = ride.rideId, traveler = ride.traveler }, "CHANNEL")
   end
   local l = e.ledgers[ride.standId]

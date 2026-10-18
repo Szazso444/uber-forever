@@ -89,7 +89,8 @@ end
 
 -- Files a ride log the warlock itself vouched for. The log backs the traveler's
 -- report of a death on that ride: a report that came first as an unproven one
--- becomes heavy now (R48). Returns whether the log was stored.
+-- becomes heavy now (R48). Returns whether the log was stored. A warlock files
+-- its own logs through here too (Driver, R52), so its own witness hears them.
 local function fileRideLog(e, warlock, rideId, ts, traveler, now)
   if not Ratings.addRideLog(e.db, warlock, rideId, ts, traveler, now) then
     return false
@@ -97,6 +98,10 @@ local function fileRideLog(e, warlock, rideId, ts, traveler, now)
   e.dirty = true
   e.witness:corroborate(warlock, rideId, now)
   return true
+end
+
+function Engine:fileRideLog(warlock, rideId, ts, traveler, now)
+  return fileRideLog(self, warlock, rideId, ts, traveler, now)
 end
 
 -- The warlock's own log of a ride it gave.

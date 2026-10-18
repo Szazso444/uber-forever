@@ -31,12 +31,13 @@ local function scoreOf(ns, parts)
 end
 
 -- A summon ride up to the traveler's arrival: the traveler asks the stand, the
--- warlock accepts, the traveler joins the group, the warlock summons and the
--- traveler accepts. Returns the traveler's ride.
+-- warlock accepts, the traveler joins the group, the warlock presses Summon
+-- next and summons, and the traveler accepts. Returns the traveler's ride.
 local function rideTo(w, lock, p, standId)
   local ride = assert(p.engine:requestRide(standId, 0)); w:advance(2)
   assert(lock.engine:acceptRequest(p.name .. "#" .. standId)); w:advance(2)
   assert.is_true(w:acceptInvite(p.name)); w:advance(2)
+  assert.are.equal(p.name, lock.engine:nextTraveler())
   w:offerSummon(lock.name, p.name); w:advance(1)
   assert.is_true(w:acceptSummon(p.name))
   assert.are.equal("arrived", ride.state)
@@ -441,6 +442,47 @@ describe("a real death and the warlock's ride log (R48)", function()
     assert.is_true(blind.engine:query("Dar Kbolt")); w:advance(10)
     assert.is_truthy(blind.db.rideLogs["Dar Kbolt"][ride.rideId])
     assert.are.same({true, "self"}, {death(blind).heavy, death(blind).source})
+  end)
+end)
+
+-- R52: a grouped throwaway that was never summoned forges its arrival, claims
+-- its own death and goes silent, to smear an honest warlock.
+describe("forged arrival", function()
+  local ns, w, lock, thr, obs, stand, ride
+  before_each(function()
+    ns = Taxi.load(); w = ns.World.new{seed = 11, start = 500000}
+    lock = w:addPlayer{name = "Hon Lock", class = "WARLOCK", level = 50, place = "gadgetzan"}
+    thr = w:addPlayer{name = "Thr Ow", class = "WARRIOR", level = 30, place = "ironforge"}
+    obs = w:addPlayer{name = "Obs Erver", class = "ROGUE", level = 44, place = "ironforge"}
+    stand = assert(lock.engine:openStand{kind = "lock"}); w:advance(2)
+    ride = assert(thr.engine:requestRide(stand.standId, 0)); w:advance(2)
+    assert.is_string(lock.engine:acceptRequest("Thr Ow#" .. stand.standId)); w:advance(2)
+    assert.is_true(w:acceptInvite("Thr Ow")); w:advance(2)
+    assert.are.equal("grouped", ride.state)
+  end)
+  after_each(function() assert.are.same({}, w.errors) end)
+
+  it("gets no ride log out of the warlock, so the death it claims stays light", function()
+    local f = {rideId = ride.rideId, warlock = "Hon Lock"}
+    thr.engine:send("ARRIVED", f, "CHANNEL"); thr.engine:send("ARRIVED", f, "WHISPER", "Hon Lock"); w:advance(3)
+    assert.are.equal("grouped", lock.engine.rides["Thr Ow#" .. stand.standId].state)
+    for _, p in ipairs{lock, obs} do
+      assert.is_nil(p.db.rideLogs["Hon Lock"], p.name)
+    end
+    thr.engine:send("DEATH", {rideId = ride.rideId, victim = "Thr Ow", warlock = "Hon Lock", secs = 20,
+      source = "self"}, "CHANNEL")
+    w:advance(3)
+    w:removePlayer("Thr Ow"); w:advance(300)
+    local d = obs.db.deaths["Hon Lock"][ride.rideId]
+    assert.are.same({false, "self"}, {d.heavy, d.source})
+    assert.is_near(scoreOf(ns, {{1, ns.Config.RATING.W_ONE_SIDED}}), obs.engine:summary("Hon Lock", "trust").score, 1e-9)
+  end)
+
+  it("the warlock's real summon still logs the ride (control)", function()
+    assert.are.equal("Thr Ow", lock.engine:nextTraveler())
+    w:offerSummon("Hon Lock", "Thr Ow"); w:advance(1)
+    assert.is_true(w:acceptSummon("Thr Ow")); w:advance(2)
+    assert.are.equal("Thr Ow", obs.db.rideLogs["Hon Lock"][ride.rideId].traveler)
   end)
 end)
 
