@@ -1,6 +1,6 @@
 # Taxi v1 — controller rulings
 
-Every decision the build controller made on the user's behalf while executing docs/superpowers/plans/2026-10-17-taxi-v1.md, in order, each with its reason and what it costs if wrong. These amend the plan; the spec stays the authority.
+Every decision the build controller made on the user's behalf while executing docs/superpowers/plans/2026-10-17-taxi-v1.md, in order, each with its reason and what it costs if wrong. These amend the plan; the spec stays the authority. R70 (adopted) narrows R52 for summon rides.
 
 - | T1 ↔ T2..T19 (Taxi.toc) | T1 "files in File-map order" vs later tasks "add them to the TOC" | Conflict: helper would loadfile missing files. Ruling R1 |
 - | T4 ↔ T13 | Transport.new{backend,clock,prefix,onMessage,onVersion}; chunk "id:i/n:payload" | ok; msgId with fractional sim time → Ruling R2 |
@@ -81,4 +81,4 @@ Every decision the build controller made on the user's behalf while executing do
 - Ruling R67: trust count = rides with both receipt and ride log (at most 1 per traveler per day) plus rating/death ids; prune caps receipts and rideLogs.
 - Ruling R68: Transport HIGH/LOW priority (QUERY_R and STAND low); at most 2 queued QUERY_R per responder; at most 1 QUERY_R per 10 s.
 - Ruling R69: STAND carries status; Travel shows live/paused (paused marked, Request disabled); Clicking shows recruiting/paused needing clickers.
-- Final fix wave: NEW Important N1 — Driver-side R52 gating breaks multi-rider mage portals (only the first ride moves to portal; others stay grouped, no TIP_ACK) and manual-ritual tip accounting (grouped ride never arrives, owed 0). Ruling R70 (proposed, needs the user's go-ahead since the process allows one fix wave): nextTraveler moves every grouped portal ride with the same dest to portal; a grouped summon ride may arrive for state/tip accounting but never files RIDE_LOG; add tests for a 2-rider portal with tips and a manual ritual with a tip — cost if wrong: the regression ships.
+- Ruling R70 (adopted, user-approved 2026-10-18): a mage's Open portal moves every grouped portal ride with the same dest to portal; a grouped summon ride may arrive on its own traveler's ARRIVED for state and tip accounting, but files no ride log and broadcasts no RIDE_LOG unless it was in summoning (Summon next). This narrows R52 for summon rides. Fixed the N1 regression from the fix wave. Cost if wrong: a forged ARRIVED from a grouped traveler marks only its own ride arrived (no log, no count, no heavy death).
