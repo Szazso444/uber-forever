@@ -134,6 +134,20 @@ describe("summon windows", function()
         assert.are.equal(before, #ui:texts()) -- no line left over, none added
       end)
 
+      it("follows the summon while it is up: a fight that starts after the offer turns it RED", function()
+        grouped()
+        w:offerSummon("Dar Kbolt", "Tra Veler")
+        assert.is_not_nil(panel("Summon Guard: GREEN - matches your ride"))
+        w:setCombat("Cee One", true) -- not in the group: still GREEN
+        w:setCombat("Dar Kbolt", true)
+        local p = assert(panel("Summon Guard: RED - do not accept"))
+        assert.is_nil(panel("Summon Guard: GREEN - matches your ride"))
+        assert.is_true(ui:shows("✗ In combat: Dar Kbolt"))
+        assert.are.same({ "Decline summon" }, buttonsOf(p))
+        w:setCombat("Dar Kbolt", false)
+        assert.is_not_nil(panel("Summon Guard: GREEN - matches your ride"))
+      end)
+
       it("shows in combat: it hangs from UIParent, not from the protected main window", function()
         grouped()
         ui.combat = true

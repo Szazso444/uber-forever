@@ -786,6 +786,62 @@ describe("Traveler", function()
     assert.is_false(check(last(t, "GUARD_VERDICT")[2], "changed").ok)
   end)
 
+  describe("a summon still on screen is judged again", function()
+    it("turns RED as soon as the crew enters combat after the offer", function()
+      grouped()
+      w:offerSummon("Dar Kbolt", "Tra Veler"); w:advance(0.5)
+      assert.are.equal("GREEN", last(t, "GUARD_VERDICT")[2].level)
+      w:setCombat("Dar Kbolt", true) -- COMBAT_CHANGED
+      local v = last(t, "GUARD_VERDICT")[2]
+      assert.are.equal("RED", v.level)
+      assert.are.equal("In combat: Dar Kbolt", check(v, "combat").text)
+    end)
+
+    it("turns RED within a second when the warlock walks more than 40 yards from the stand", function()
+      grouped()
+      w:offerSummon("Dar Kbolt", "Tra Veler"); w:advance(0.5)
+      w:moveTo("Dar Kbolt", "gadgetzan", 45, 0) -- his stand closes only past 50 yards
+      assert.are.equal("GREEN", last(t, "GUARD_VERDICT")[2].level) -- nothing told my client yet
+      w:advance(1)
+      local v = last(t, "GUARD_VERDICT")[2]
+      assert.are.equal("RED", v.level)
+      assert.is_false(check(v, "position").ok)
+    end)
+
+    it("asks again when the group changes and when I move", function()
+      grouped()
+      w:offerSummon("Dar Kbolt", "Tra Veler"); w:advance(0.5)
+      local near = add("Nea Rby", {place = "gadgetzan"})
+      w:setCombat("Nea Rby", true) -- not in my group yet: not my business
+      assert.are.equal("GREEN", last(t, "GUARD_VERDICT")[2].level)
+      lock.game:invite("Nea Rby"); assert.is_true(w:acceptInvite("Nea Rby")) -- GROUP_CHANGED
+      assert.are.equal("In combat: Nea Rby", check(last(t, "GUARD_VERDICT")[2], "combat").text)
+      local n = #emitted(t, "GUARD_VERDICT")
+      w:moveTo("Tra Veler", "ironforge", 3, 0) -- MOVED
+      assert.are.equal(n + 1, #emitted(t, "GUARD_VERDICT"))
+      assert.is_true(near.combat)
+    end)
+
+    it("stops once the popup has gone", function()
+      grouped()
+      w:offerSummon("Dar Kbolt", "Tra Veler"); w:advance(2.5)
+      assert.is_true(#emitted(t, "GUARD_VERDICT") >= 3) -- the offer, and once a second since
+      w:fire(t, "SUMMON_GONE")
+      local n = #emitted(t, "GUARD_VERDICT")
+      w:advance(5); w:setCombat("Dar Kbolt", true); w:moveTo("Tra Veler", "ironforge", 3, 0)
+      assert.are.equal(n, #emitted(t, "GUARD_VERDICT"))
+    end)
+
+    it("stops once the summon has landed me", function()
+      grouped()
+      w:offerSummon("Dar Kbolt", "Tra Veler"); w:advance(1.5)
+      assert.is_true(w:acceptSummon("Tra Veler"))
+      local n = #emitted(t, "GUARD_VERDICT")
+      w:advance(5); w:setCombat("Dar Kbolt", true)
+      assert.are.equal(n, #emitted(t, "GUARD_VERDICT"))
+    end)
+  end)
+
   it("is RED when someone at the stand is in combat, but not for a group member far away", function()
     grouped()
     add("Far Away") -- in Ironforge

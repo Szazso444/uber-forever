@@ -390,23 +390,80 @@ local function awaitLanding(e, ride, summon)
   end
 end
 
--- A summon is offered: the guard compares it with my ride (see summonRide).
--- Gathering the facts can't stop the verdict: if it fails, the guard gets
--- unknowns. It never accepts anything.
-Engine.gameHandlers.SUMMON_OFFERED = function(e)
+-- The summon on screen, as the game tells it: its facts (nil when they can't
+-- be read), and whether the game said plainly that there is none (`gone`).
+local function summonNow(e)
   local game = e.game
-  local summon = try(e, "summon facts", game.summonFacts, game)
-  if type(summon) ~= "table" then
-    summon = nil
+  local ok, summon = pcall(game.summonFacts, game)
+  if not ok then
+    pcall(e.log, tostring(e.me) .. ": summon facts: " .. tostring(summon))
+    return nil, false
   end
-  local ride = summonRide(e, summon and summon.summoner)
+  if summon == nil then
+    return nil, true
+  end
+  return type(summon) == "table" and summon or nil, false
+end
+
+-- The guard's verdict on `summon` against `ride`. Gathering the facts can't
+-- stop the verdict: if it fails, the guard gets unknowns.
+local function judge(e, summon, ride)
   local facts = try(e, "guard facts", guardFacts, e, summon, ride) or unknownFacts(summon, ride)
-  local verdict = SummonGuard.evaluate(facts)
+  return SummonGuard.evaluate(facts)
+end
+
+-- While a summon is on screen, e.pendingSummon = { ride }: the ride it was
+-- judged against. What the guard checked can change while the popup is up (the
+-- crew starts a fight, the warlock walks off), so it is judged again on every
+-- COMBAT_CHANGED, GROUP_CHANGED and MOVED, and every RECHECK_SECONDS, and the
+-- new verdict goes out. Facts are gathered afresh each time; the ride stays the
+-- one the summon was offered for (a ride cancelled meanwhile is still the one
+-- to compare with: its warlock is no longer in my group, which is RED). It
+-- stops when the popup goes (SUMMON_GONE, or the game names no summon) or the
+-- summon lands me.
+local RECHECK_SECONDS = 1
+
+local function recheck(e)
+  local pending = e.pendingSummon
+  if pending == nil then
+    return
+  end
+  local summon, gone = summonNow(e)
+  if gone then
+    e.pendingSummon = nil
+    return
+  end
+  e:emit("GUARD_VERDICT", judge(e, summon, pending.ride), pending.ride)
+end
+
+local function recheckEverySecond(e, pending)
+  e.clock:after(RECHECK_SECONDS, function()
+    if e.stopped or e.pendingSummon ~= pending then
+      return
+    end
+    e:safely("guard recheck", recheck, e)
+    recheckEverySecond(e, pending)
+  end)
+end
+
+-- A summon is offered: the guard compares it with my ride (see summonRide),
+-- and keeps comparing while it is on screen (see recheck). It never accepts
+-- anything.
+Engine.gameHandlers.SUMMON_OFFERED = function(e)
+  local summon = summonNow(e)
+  local ride = summonRide(e, summon and summon.summoner)
+  local verdict = judge(e, summon, ride)
   if ride ~= nil then
     awaitLanding(e, ride, summon)
   end
+  local pending = { ride = ride }
+  e.pendingSummon = pending
+  recheckEverySecond(e, pending)
   e:emit("GUARD_VERDICT", verdict, ride)
 end
+
+Engine.gameHandlers.COMBAT_CHANGED = recheck
+Engine.gameHandlers.GROUP_CHANGED = recheck
 
 -- Declines the summon on screen (the guard panel's button). Always allowed:
 -- turning a summon down is never refused.
@@ -432,6 +489,7 @@ end
 -- been accepted, and the landing may be seen only a moment later, so the
 -- failure waits LANDING_WINDOW seconds (R43).
 Engine.gameHandlers.SUMMON_GONE = function(e)
+  e.pendingSummon = nil
   e:emit("SUMMON_GONE")
   for _, ride in pairs(e.rides) do
     local summon = ride.summon
@@ -512,6 +570,7 @@ local function arrive(e, ride, loc)
   if ride.kind == "summon" then
     ride.summon = nil
     ride.wrongPlace = not atStand(ride.stand, loc)
+    e.pendingSummon = nil -- the summon is over: no more verdicts on it
   end
   local fields = { rideId = ride.rideId, warlock = ride.driver }
   e:send("ARRIVED", fields, "CHANNEL")
@@ -535,6 +594,10 @@ Engine.gameHandlers.MOVED = function(e)
     end
   end
 end
+
+-- A move of mine while a summon is still on screen changes what the guard
+-- sees (registered after the landing check above, which may end the summon).
+Engine.gameHandlers.MOVED = recheck
 
 -- After the ride ------------------------------------------------------------------------------
 
