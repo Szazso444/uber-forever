@@ -338,6 +338,17 @@ describe("Driver", function()
     assert.is_nil(ns.Board.get(t.engine.board, s.standId))
   end)
 
+  it("drops a heartbeat still waiting to go out when the stand closes, so it can't follow the STAND_END (R68)", function()
+    local s = lock.engine:openStand{kind = "lock"} -- its STAND is queued, not yet sent
+    assert.are.equal(1, lock.transport:queuedMessages("STAND"))
+    assert.is_true(lock.engine:closeStand())
+    assert.are.equal(0, lock.transport:queuedMessages("STAND"))
+    w:advance(2)
+    assert.are.same({}, wireOf(ns, w, "STAND", "Dar Kbolt"))
+    assert.are.equal(1, #wireOf(ns, w, "STAND_END", "Dar Kbolt"))
+    assert.is_nil(ns.Board.get(t.engine.board, s.standId))
+  end)
+
   it("files a request once, seats the traveler on accept, and gives up on an invite not taken in 60 s", function()
     local s = lock.engine:openStand{kind = "lock"}; w:advance(1)
     local key = "Tra Veler#" .. s.standId

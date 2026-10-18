@@ -43,6 +43,11 @@ local M = {
   QUERY_MAX_REPLIES = 20,
   QUERY_JITTER = 5, -- replies are delayed by 0..QUERY_JITTER seconds
   QUERY_MAX_RECORDS = 50, -- records per reply
+  -- A responder sends at most one reply per QUERY_REPLY_INTERVAL seconds, and
+  -- keeps at most QUERY_MAX_QUEUED replies waiting to go out; any other reply
+  -- is dropped, so one client's queries can't fill its send queue (R68).
+  QUERY_REPLY_INTERVAL = 10,
+  QUERY_MAX_QUEUED = 2,
   RIDE_MEMORY = 1800, -- seconds Witness remembers a ride before dropping it
 
   -- Rating maths

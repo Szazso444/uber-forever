@@ -330,7 +330,9 @@ function Engine:inGroup(name)
 end
 
 -- Closes my stand: STAND_END goes out (once messages can) and STAND_CHANGED
--- tells the UI. Returns whether there was a stand to close.
+-- tells the UI. A heartbeat still waiting in the transport is dropped: it
+-- waits behind other traffic (R68), and would put the stand back on the boards
+-- after its STAND_END. Returns whether there was a stand to close.
 function Engine:closeStand()
   local stand = self.stand
   if stand == nil then
@@ -338,6 +340,7 @@ function Engine:closeStand()
   end
   stand.closed = true
   self.stand = nil
+  self.transport:drop("STAND")
   self:send("STAND_END", { standId = stand.standId }, "CHANNEL")
   self:emit("STAND_CHANGED", stand)
   return true

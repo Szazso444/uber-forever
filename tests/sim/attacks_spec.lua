@@ -191,6 +191,50 @@ describe("a flood of arrivals", function()
   end)
 end)
 
+-- R68: one client's QUERYs must not hold a responder's ride traffic back.
+describe("a query flood", function()
+  it("leaves an honest warlock's ACCEPT on time, and the ride completes", function()
+    local ns = Taxi.load()
+    local w = ns.World.new{seed = 17, start = 700000}
+    local lock = w:addPlayer{name = "Hon Lock", class = "WARLOCK", level = 50, place = "gadgetzan"}
+    local q = w:addPlayer{name = "Que Ry", class = "MAGE", level = 20, place = "ironforge"}
+    local t = w:addPlayer{name = "Tra Vel", class = "HUNTER", level = 40, place = "ironforge"}
+    local now = math.floor(w.clock:now())
+    -- The warlock's addon has heard 50 ratings about each of 20 other warlocks.
+    for k = 1, 20 do
+      local target = "Oth Er" .. string.char(96 + k)
+      for i = 1, 50 do
+        local rater = "Rat Er" .. k .. "x" .. i
+        assert(ns.Ratings.addDirect(lock.db, {kind = "trust", rater = rater, target = target, stars = 4,
+          id = ns.Ride.makeId(target, rater, now - 5000 - i), ts = now - 4000 - i}, rater, now))
+      end
+    end
+    local stand = assert(lock.engine:openStand{kind = "lock"}); w:advance(2)
+    for k = 1, 20 do
+      q.engine:send("QUERY", {target = "Oth Er" .. string.char(96 + k)}, "CHANNEL")
+    end
+    w:advance(8)
+    assert.is_true(lock.transport:queuedMessages("QUERY_R") <= ns.Config.QUERY_MAX_QUEUED)
+    local ride = assert(t.engine:requestRide(stand.standId, 0)); w:advance(1)
+    assert.is_string(lock.engine:acceptRequest("Tra Vel#" .. stand.standId))
+    w:advance(2)
+    assert.are.equal("accepted", ride.state)
+    assert.is_true(w:acceptInvite("Tra Vel")); w:advance(2)
+    assert.are.equal("Tra Vel", lock.engine:nextTraveler())
+    w:offerSummon("Hon Lock", "Tra Vel"); w:advance(1)
+    assert.is_true(w:acceptSummon("Tra Vel")); w:advance(3)
+    assert.are.equal("arrived", ride.state)
+    assert.are.equal("arrived", lock.engine.rides["Tra Vel#" .. stand.standId].state)
+    -- The flood bought the asker few replies: at most one every QUERY_REPLY_INTERVAL.
+    local replies = 0
+    for _, sent in ipairs(w.bus:sent()) do
+      if sent.sender == "Hon Lock" and sent.text:find("^[^:]+:1/%d+:%d+%^QUERY_R%^") then replies = replies + 1 end
+    end
+    assert.is_true(replies <= 1 + math.floor((w.clock:now() - now) / ns.Config.QUERY_REPLY_INTERVAL), replies)
+    assert.are.same({}, w.errors)
+  end)
+end)
+
 describe("invented relays", function()
   local ns, w, obs, relayers, nobody, TS, ID
   before_each(function()

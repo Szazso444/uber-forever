@@ -179,8 +179,20 @@ function Engine:query(target)
 end
 
 -- Whispers what I hold about target to `to`: the newest records that fit in one
--- message (a record too big to fit is left out; the rest still go).
+-- message (a record too big to fit is left out; the rest still go). Replies
+-- wait behind ride traffic in the transport, and are rationed (R68): at most
+-- one per QUERY_REPLY_INTERVAL and at most QUERY_MAX_QUEUED still waiting to go
+-- out. A reply over either limit is dropped, never queued: the asker hears from
+-- the other holders.
 local function reply(e, target, records, to)
+  local now = e.clock:now()
+  local last = e.lastReplyAt
+  if last ~= nil and now - last < Config.QUERY_REPLY_INTERVAL then
+    return
+  end
+  if e.transport:queuedMessages("QUERY_R") >= Config.QUERY_MAX_QUEUED then
+    return
+  end
   local chosen = {}
   for _, rec in ipairs(records) do
     chosen[#chosen + 1] = rec
@@ -188,8 +200,8 @@ local function reply(e, target, records, to)
       chosen[#chosen] = nil
     end
   end
-  if #chosen > 0 then
-    e:send("QUERY_R", { target = target, records = chosen }, "WHISPER", to)
+  if #chosen > 0 and e:send("QUERY_R", { target = target, records = chosen }, "WHISPER", to) then
+    e.lastReplyAt = now
   end
 end
 

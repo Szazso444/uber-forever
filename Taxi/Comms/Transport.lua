@@ -14,6 +14,11 @@ local _, ns = ...
 -- back together, each (sender, msgId) is delivered once, and the whole text goes
 -- through Protocol.decode.
 --
+-- There are two queues (R68). Replies to queries and stand heartbeats (LOW
+-- below) can wait; everything else is ride traffic that can't, and every chunk
+-- of it goes before any waiting LOW chunk. Each queue is first in, first out,
+-- so the chunks of one message always go in order.
+--
 -- Chunks come from untrusted players: receive never raises on bad input, and
 -- the sender it reports is the one the game gave, never anything from the text.
 -- No WoW API here, and no math.random.
@@ -33,6 +38,43 @@ local SWEEP_INTERVAL = 1 -- seconds between clean-ups of stale reassembly and de
 -- so a wait that is over by this little counts as over.
 local EPSILON = 1e-6
 
+-- The message types that wait behind all others (R68).
+local LOW = { QUERY_R = true, STAND = true }
+
+-- A first-in, first-out queue of chunks: items[first] .. items[last].
+local function newQueue()
+  return { items = {}, first = 1, last = 0 }
+end
+
+local function size(q)
+  return q.last - q.first + 1
+end
+
+local function push(q, item)
+  q.last = q.last + 1
+  q.items[q.last] = item
+end
+
+local function pop(q)
+  q.items[q.first] = nil
+  q.first = q.first + 1
+  if q.first > q.last then
+    q.first, q.last = 1, 0
+  end
+end
+
+-- q without the chunks for which drop(chunk) is true, order kept.
+local function filtered(q, drop)
+  local out = newQueue()
+  for i = q.first, q.last do
+    local chunk = q.items[i]
+    if not drop(chunk) then
+      push(out, chunk)
+    end
+  end
+  return out
+end
+
 local Transport = {}
 Transport.__index = Transport
 
@@ -46,9 +88,8 @@ function M.new(opts)
     onMessage = opts.onMessage,
     onVersion = opts.onVersion,
     counter = 0,
-    queue = {}, -- chunks waiting to go out: queue[first] .. queue[last]
-    first = 1,
-    last = 0,
+    high = newQueue(), -- chunks waiting to go out, ride traffic
+    low = newQueue(), -- chunks waiting to go out after every high one (LOW)
     waitUntil = 0, -- no sending before this time (after a throttled send)
     partial = {}, -- "sender:msgId" -> { total, count, parts, startedAt }
     seen = {}, -- "sender:msgId" -> time until which repeats are ignored
@@ -65,20 +106,22 @@ function Transport:send(msgType, fields, dist, target)
   local msgId = string.format("%x%04x", math.floor(self.clock:now()) % 65536, counter % 65536)
   local text = Protocol.encode(msgType, msgId, fields)
 
-  local size = Config.CHUNK_PAYLOAD
-  local total = math.ceil(#text / size)
+  local chunkSize = Config.CHUNK_PAYLOAD
+  local total = math.ceil(#text / chunkSize)
   if total > MAX_CHUNKS then
     return nil, "too_large"
   end
   self.counter = counter
+  local q = LOW[msgType] and self.low or self.high
   for i = 1, total do
-    local payload = text:sub((i - 1) * size + 1, i * size)
-    self.last = self.last + 1
-    self.queue[self.last] = {
+    local payload = text:sub((i - 1) * chunkSize + 1, i * chunkSize)
+    push(q, {
       text = string.format("%s:%d/%d:%s", msgId, i, total, payload),
       dist = dist,
       target = target,
-    }
+      msgType = msgType,
+      msgId = msgId,
+    })
   end
   return msgId
 end
@@ -94,16 +137,39 @@ function M.fits(msgType, fields)
   return math.ceil(#text / Config.CHUNK_PAYLOAD) <= MAX_CHUNKS
 end
 
--- Chunks waiting to be sent.
+-- Chunks waiting to be sent, in both queues.
 function Transport:queued()
-  return self.last - self.first + 1
+  return size(self.high) + size(self.low)
+end
+
+-- How many messages of msgType still have a chunk waiting to be sent.
+function Transport:queuedMessages(msgType)
+  local ids, n = {}, 0
+  for _, q in ipairs({ self.high, self.low }) do
+    for i = q.first, q.last do
+      local chunk = q.items[i]
+      if chunk.msgType == msgType and not ids[chunk.msgId] then
+        ids[chunk.msgId] = true
+        n = n + 1
+      end
+    end
+  end
+  return n
+end
+
+-- Drops every chunk of msgType still waiting, so none of it goes out (a
+-- heartbeat queued behind other traffic must not follow its own STAND_END).
+function Transport:drop(msgType)
+  local function ofType(chunk)
+    return chunk.msgType == msgType
+  end
+  self.high, self.low = filtered(self.high, ofType), filtered(self.low, ofType)
 end
 
 -- Drops every chunk waiting to be sent, so nothing queued so far goes out.
 -- Messages sent afterwards are queued and sent as usual.
 function Transport:clear()
-  self.queue = {}
-  self.first, self.last = 1, 0
+  self.high, self.low = newQueue(), newQueue()
 end
 
 function Transport:sweep(now)
@@ -123,18 +189,24 @@ function Transport:sweep(now)
   end
 end
 
--- Sends queued chunks, in order, until the queue is empty or the backend says
--- stop. Call it every 0.2 s.
---   throttled (3 or 8): the chunk stays at the front and the queue waits a second;
---   lockdown (11, or inLockdown()): the queue holds, and the next pump tries again.
+-- Sends queued chunks, every high one before any low one and each queue in
+-- order, until both are empty or the backend says stop. Call it every 0.2 s.
+--   throttled (3 or 8): the chunk stays at the front and the queues wait a second;
+--   lockdown (11, or inLockdown()): the queues hold, and the next pump tries again.
+-- A message sent while a low one is half out goes next, if it is high; the
+-- rest of the low one follows.
 function Transport:pump()
   local now = self.clock:now()
   self:sweep(now)
   if now < self.waitUntil - EPSILON or self.backend.inLockdown() then
     return
   end
-  while self.first <= self.last do
-    local chunk = self.queue[self.first]
+  while true do
+    local q = size(self.high) > 0 and self.high or self.low
+    if size(q) == 0 then
+      return
+    end
+    local chunk = q.items[q.first]
     local code = self.backend.send(self.prefix, chunk.text, chunk.dist, chunk.target)
     if code == ADDON_THROTTLE or code == CHANNEL_THROTTLE then
       self.waitUntil = now + THROTTLE_WAIT
@@ -142,10 +214,8 @@ function Transport:pump()
     elseif code == LOCKDOWN then
       return
     end
-    self.queue[self.first] = nil
-    self.first = self.first + 1
+    pop(q)
   end
-  self.first, self.last = 1, 0
 end
 
 -- Receiving -------------------------------------------------------------------

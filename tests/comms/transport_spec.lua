@@ -229,6 +229,73 @@ describe("Transport", function()
       assert.are.equal(0, t:queued())
       assert.is_truthy(be.calls[2].text:find("B", 1, true))
     end)
+
+    -- R68: QUERY_R replies and STAND heartbeats can wait; ride traffic can't.
+    describe("priorities (R68)", function()
+      -- The message type of each call, from the chunk's payload ("v:TYPE^...").
+      local function typesOf(be)
+        local out = {}
+        for i, call in ipairs(be.calls) do
+          out[i] = call.text:match("^[^:]+:%d+/%d+:%d+%^([%u_]+)") or "(cont)"
+        end
+        return out
+      end
+
+      it("sends every other message before queued QUERY_R and STAND chunks", function()
+        local t, be = make({})
+        t:send("STAND", {standId = "s"}, "CHANNEL")
+        t:send("QUERY_R", {target = "T", records = {}}, "WHISPER", "Bo Lee")
+        t:send("ACCEPT", {rideId = "r", standId = "s"}, "WHISPER", "Bo Lee")
+        t:send("QUERY", {target = "T"}, "CHANNEL")
+        ticks(t, 1)
+        assert.are.same({"ACCEPT", "QUERY", "STAND", "QUERY_R"}, typesOf(be))
+      end)
+
+      it("puts a message sent while a long low one is half out next, and keeps the low one's chunks in order", function()
+        local t, be = make({0, 3})
+        local id = t:send("STAND", {standId = "s", note = string.rep("n", 600)}, "CHANNEL") -- 3 chunks
+        ticks(t, 1) -- chunk 1 goes, chunk 2 is throttled
+        t:send("ACCEPT", {rideId = "r", standId = "s"}, "WHISPER", "Bo Lee")
+        ticks(t, 10)
+        local heads = {}
+        for i, call in ipairs(be.calls) do heads[i] = call.text:match("^([^:]+:%d+/%d+):") end
+        local accept = be.calls[3].text
+        assert.is_truthy(accept:find("ACCEPT", 1, true))
+        assert.are.same({id .. ":1/3", id .. ":2/3"}, {heads[1], heads[2]}) -- the throttled try
+        assert.are.same({id .. ":2/3", id .. ":3/3"}, {heads[4], heads[5]})
+        assert.are.equal(0, t:queued())
+      end)
+
+      it("still sends a heartbeat when nothing else is waiting", function()
+        local t, be = make({})
+        t:send("STAND", {standId = "s"}, "CHANNEL")
+        ticks(t, 1)
+        assert.are.same({"STAND"}, typesOf(be))
+      end)
+
+      it("counts both queues in queued(), and clear() empties both", function()
+        local t = make({})
+        t:send("STAND", {standId = "s", note = string.rep("n", 700)}, "CHANNEL")
+        t:send("QUERY", {target = "T"}, "CHANNEL")
+        assert.are.equal(5, t:queued())
+        t:clear()
+        assert.are.equal(0, t:queued())
+      end)
+
+      it("queuedMessages(type) counts the messages of a type still waiting, drop(type) removes them", function()
+        local t, be = make({})
+        t:send("QUERY_R", {target = "T", records = {}}, "WHISPER", "Bo Lee")
+        t:send("QUERY_R", {target = "U", records = {}}, "WHISPER", "Bo Lee")
+        t:send("STAND", {standId = "s", note = string.rep("n", 700)}, "CHANNEL")
+        t:send("QUERY", {target = "T"}, "CHANNEL")
+        assert.are.same({2, 1, 1, 0}, {t:queuedMessages("QUERY_R"), t:queuedMessages("STAND"),
+          t:queuedMessages("QUERY"), t:queuedMessages("ACCEPT")})
+        t:drop("STAND")
+        assert.are.same({0, 3}, {t:queuedMessages("STAND"), t:queued()})
+        ticks(t, 1)
+        assert.are.same({"QUERY", "QUERY_R", "QUERY_R"}, typesOf(be))
+      end)
+    end)
   end)
 
   describe("receiving", function()

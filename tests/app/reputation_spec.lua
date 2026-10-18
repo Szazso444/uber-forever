@@ -188,18 +188,51 @@ describe("Reputation sync", function()
     end)
 
     it("answers one asker about one warlock once per QUERY_COOLDOWN", function()
+      local apart = ns.Config.QUERY_REPLY_INTERVAL + ns.Config.QUERY_JITTER + 1 -- past the reply rate limit (R68)
       rated(b, "Ana Smith", 4)
       hear(b, "Cy New", "QUERY", {target = "Dar Kbolt"})
       hear(b, "Cy New", "QUERY", {target = "Dar Kbolt"})
+      w:advance(apart)
       hear(b, "Di Other", "QUERY", {target = "Dar Kbolt"})
-      w:advance(10)
+      w:advance(apart)
       local replies = ofType(wire("Bo Lee"), "QUERY_R")
       assert.are.same({"Cy New", "Di Other"}, {replies[1].to, replies[2].to})
       assert.are.equal(2, #replies)
       w:advance(ns.Config.QUERY_COOLDOWN)
       hear(b, "Cy New", "QUERY", {target = "Dar Kbolt"})
-      w:advance(10)
+      w:advance(apart)
       assert.are.equal(3, #ofType(wire("Bo Lee"), "QUERY_R"))
+    end)
+
+    it("sends at most one reply per QUERY_REPLY_INTERVAL, and drops the others (R68)", function()
+      assert.are.equal(10, ns.Config.QUERY_REPLY_INTERVAL)
+      rated(b, "Ana Smith", 4)
+      for i = 1, 5 do
+        hear(b, "Ask Er" .. string.char(96 + i), "QUERY", {target = "Dar Kbolt"})
+      end
+      w:advance(ns.Config.QUERY_JITTER + 1)
+      assert.are.equal(1, #ofType(wire("Bo Lee"), "QUERY_R"))
+      w:advance(60)
+      assert.are.equal(1, #ofType(wire("Bo Lee"), "QUERY_R")) -- dropped, not sent later
+      assert.are.equal(0, b.transport:queuedMessages("QUERY_R"))
+      hear(b, "Ask Erz", "QUERY", {target = "Dar Kbolt"})
+      w:advance(ns.Config.QUERY_JITTER + 1)
+      assert.are.equal(2, #ofType(wire("Bo Lee"), "QUERY_R"))
+    end)
+
+    it("keeps at most QUERY_MAX_QUEUED replies waiting to go out, and drops the others (R68)", function()
+      assert.are.equal(2, ns.Config.QUERY_MAX_QUEUED)
+      ns.Config.QUERY_REPLY_INTERVAL = 0 -- the queue cap alone
+      rated(b, "Ana Smith", 4)
+      w.bus:setLockdown("Bo Lee", true) -- nothing goes out for now
+      for i = 1, 5 do
+        hear(b, "Ask Er" .. string.char(96 + i), "QUERY", {target = "Dar Kbolt"})
+      end
+      w:advance(ns.Config.QUERY_JITTER + 1)
+      assert.are.equal(2, b.transport:queuedMessages("QUERY_R"))
+      w.bus:setLockdown("Bo Lee", false)
+      w:advance(5)
+      assert.are.equal(2, #ofType(wire("Bo Lee"), "QUERY_R"))
     end)
 
     it("fits a long history into one reply, newest first", function()
