@@ -69,14 +69,14 @@ end
 -- form can only belong to the warlock and traveler it names, so a report that
 -- pairs it with anyone else is refused (otherwise a relayed copy naming
 -- another victim could be merged into the real death and hide it). An id in
--- any other form is not checked.
+-- any other form is no ride's, and is refused too (M7): it fails closed.
 local function pairMatches(rideId, warlock, victim)
   if Names.same(warlock, victim) then
     return false
   end
   local driver, traveler = rideId:match("^([^@]+)@([^@]+)@%d+$")
   if driver == nil then
-    return true
+    return false
   end
   return Names.same(driver, warlock) and Names.same(traveler, victim)
 end

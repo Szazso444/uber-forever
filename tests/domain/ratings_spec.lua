@@ -39,8 +39,16 @@ describe("Ratings", function()
     return { kind = "trust", rater = rater, target = "Ana Smith", stars = stars, id = id, ts = ts or T0 }
   end
 
+  -- The id of the rater's shift on a stand of Ana Smith's, as Ledger makes one
+  -- (standId:clicker:seconds, M9), standing in for the short `id` a test names:
+  -- the same short id gives the same shift.
+  local function shiftId(rater, id)
+    local digits = id:gsub(".", function(c) return string.format("%03d", c:byte()) end)
+    return "Ana Smith@" .. T0 .. ":" .. rater .. ":" .. digits
+  end
+
   local function share(rater, stars, id, ts)
-    return { kind = "share", rater = rater, target = "Ana Smith", stars = stars, id = id, ts = ts or T0 }
+    return { kind = "share", rater = rater, target = "Ana Smith", stars = stars, id = shiftId(rater, id), ts = ts or T0 }
   end
 
   -- Add a direct rating the way its rater would send it.
@@ -258,6 +266,30 @@ describe("Ratings", function()
       local rec = share("Cal Dunn", 4, "r1")
       rec.owed, rec.received, rec.pct = 0, 0, 0
       assert.is_true(direct(rec))
+    end)
+
+    it("takes a share rating only with its shift's id: <standId>:<rater>:<secs>, on the target's stand (M9)", function()
+      local function rated(id, rater, relayer)
+        local rec = { kind = "share", rater = rater or "Cal Dunn", target = "Ana Smith", stars = 1, id = id, ts = T0 }
+        if relayer then
+          return R.addRelayed(db, rec, relayer)
+        end
+        return direct(rec)
+      end
+      for _, id in ipairs({
+        "r1", "Ana Smith@1", "Ana Smith@1:Cal Dunn", "Ana Smith@1:Cal Dunn:x", -- not a shift id
+        "Bob Jones@1:Cal Dunn:5", "Ana Smithx@1:Cal Dunn:5", "Ana Smith:Cal Dunn:5", -- another warlock's stand
+        "Ana Smith@1:Dan Eve:5", -- another clicker's shift
+      }) do
+        assert.are.same({ nil, "bad_record" }, { rated(id) }, id)
+        assert.are.same({ nil, "bad_record" }, { rated(id, nil, "Rel Ay") }, id)
+      end
+      assert.is_nil(db.ratings["Ana Smith"])
+      assert.is_true(rated("Ana Smith@1:Cal Dunn:5"))
+      assert.is_true(rated("Ana Smith@1: Cal  Dunn :6", " Cal Dunn")) -- names compare as names
+      assert.is_true(rated("Ana Smith@1:Dan Eve:5", "Dan Eve", "Rel Ay"))
+      -- A trust rating's id is a ride's, and is not checked here.
+      assert.is_true(direct(trust("Eve Gray", 5, "r1")))
     end)
   end)
 
@@ -1065,7 +1097,7 @@ describe("Ratings", function()
       assert.are.same({ kind = "ridelog", rater = "Ana Smith", id = "r6", ts = T0 + 60, other = "Gus Hill" }, recs[1])
       assert.are.same({ kind = "death", rater = "Eve Gray", id = "r4", ts = T0 + 40, other = "Eve Gray" }, recs[2])
       assert.are.same(
-        { kind = "share", rater = "Cal Dunn", stars = 4, id = "r2", ts = T0 + 20, owed = 100, received = 90, pct = 25 },
+        { kind = "share", rater = "Cal Dunn", stars = 4, id = shiftId("Cal Dunn", "r2"), ts = T0 + 20, owed = 100, received = 90, pct = 25 },
         recs[3]
       )
       assert.are.same({ kind = "trust", rater = "Bob Jones", stars = 5, id = "r1", ts = T0 + 10 }, recs[4])

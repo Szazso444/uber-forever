@@ -23,10 +23,36 @@ function M.new()
   return { stands = {} }
 end
 
+-- The seconds a stand id ends in (ids are owner@seconds), or nil.
+local function idTime(standId)
+  return tonumber(type(standId) == "string" and standId:match("@(%d+)$") or nil)
+end
+
+-- Whether stand id `a` is older than `b`, both of one owner: by the seconds
+-- they end in; when either has none, `a` (heard before) is the older.
+local function olderId(a, b)
+  local ta, tb = idTime(a), idTime(b)
+  if ta == nil or tb == nil then
+    return true
+  end
+  return ta <= tb
+end
+
 -- Stores `view` (replacing the entry with the same standId) and stamps its
 -- changedAt: `now` for a new stand or one that has moved, otherwise the earlier
--- entry's changedAt carried forward.
+-- entry's changedAt carried forward. An owner has one stand on the board, the
+-- newest (M6): a new id replaces the owner's older entry, and a late heartbeat
+-- of an older stand is not stored. Returns whether the view was stored.
 function M.upsert(b, view, now)
+  for standId, other in pairs(b.stands) do
+    if standId ~= view.standId and ns.Names.same(other.owner, view.owner) then
+      if olderId(standId, view.standId) then
+        b.stands[standId] = nil
+      else
+        return false
+      end
+    end
+  end
   local previous = b.stands[view.standId]
   if previous ~= nil and samePlace(previous, view) then
     view.changedAt = previous.changedAt
@@ -112,7 +138,8 @@ function M.list(b, opts)
     elseif a.view.owner ~= c.view.owner then
       return a.view.owner < c.view.owner
     end
-    -- One owner with two stands (a new one heard before the old one expired).
+    -- An owner has one stand (upsert, M6); the id still keeps the order from
+    -- ever depending on pairs().
     return a.view.standId < c.view.standId
   end)
 

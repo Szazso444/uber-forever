@@ -122,7 +122,8 @@ describe("summon flow", function()
     assert.are.equal(0, failures())
     w:advance(0.4)
     assert.are.equal(1, failures())
-    assert.are.same({"STATUS", "STATUS_RAID_FAILED", "Couldn't convert the group to a raid."}, last(lock, "STATUS"))
+    assert.are.same({"STATUS", "STATUS_RAID_FAILED",
+      "Couldn't convert the group to a raid. Convert it from the group menu, then press Accept again."}, last(lock, "STATUS"))
     assert.are.equal("requested", lock.engine.rides[key].state)
     -- the wait is over: a raid made later doesn't accept the request by itself
     lock.game.convertToRaid = convert
@@ -234,7 +235,9 @@ describe("summon flow", function()
     lock.engine:nextTraveler(); w:offerSummon("Dar Kbolt", "Tra Veler"); w:acceptSummon("Tra Veler"); w:advance(2)
     local rideId = t.engine.rides[key].rideId
     assert.is_true(t.engine:submitArrival(rideId, nil, 10000))
-    assert.are.equal("Dar Kbolt", t.tradeWith); assert.are.equal(10000, t.tradeMoney)
+    assert.are.equal("Dar Kbolt", t.tradeWith); assert.is_nil(t.tradeMoney) -- opening sets no money (M2)
+    assert.is_true(t.engine:putTipInTrade(rideId, 10000)) -- the Put button
+    assert.are.equal(10000, t.tradeMoney)
     w:trade("Tra Veler", "Dar Kbolt", 10000); w:advance(3)
     assert.are.same({{clicker = "Cee One", owed = 2500, received = 0}, {clicker = "Cee Two", owed = 2500, received = 0}},
       lock.engine:payoutList())
@@ -330,9 +333,12 @@ describe("Driver", function()
     local s = lock.engine:openStand{kind = "lock"}; w:advance(1)
     w:moveTo("Dar Kbolt", "gadgetzan", 30, 0)
     assert.are.equal(s, lock.engine.stand)
+    assert.are.same({}, emitted(lock, "STATUS"))
     w:moveTo("Dar Kbolt", "gadgetzan", 51, 0)
     assert.is_nil(lock.engine.stand)
     assert.is_true(s.closed)
+    assert.are.same({"STATUS", "STATUS_STAND_MOVED", "Your stand closed because you moved away from it."},
+      last(lock, "STATUS"))
     w:advance(1)
     assert.are.equal(1, #wireOf(ns, w, "STAND_END", "Dar Kbolt"))
     assert.is_nil(ns.Board.get(t.engine.board, s.standId))
@@ -1040,9 +1046,35 @@ describe("Traveler", function()
     assert.are.same({}, emitted(t, "ARRIVED"))
   end)
 
+  it("a flight path or hearthstone while the popup is up is not an arrival (R43, M8)", function()
+    local _, ride = grouped()
+    w:offerSummon("Dar Kbolt", "Tra Veler"); w:advance(1)
+    w:moveTo("Tra Veler", "stormwind") -- the popup is still up: not the summon
+    assert.are.equal("summoning", ride.state)
+    assert.are.same({}, emitted(t, "ARRIVED"))
+    w:advance(5)
+    w:moveTo("Tra Veler", "stormwind", 3, 0) -- a few steps there, still with the popup up
+    assert.are.equal("summoning", ride.state)
+    assert.is_true(w:acceptSummon("Tra Veler")) -- accepted from Stormwind: the summon lands
+    assert.are.equal("arrived", ride.state)
+    assert.is_false(ride.wrongPlace)
+  end)
+
+  it("a hearthstone during the popup is not a landing after the popup goes either (M8)", function()
+    local _, ride = grouped()
+    w:offerSummon("Dar Kbolt", "Tra Veler"); w:advance(1)
+    w:moveTo("Tra Veler", "stormwind")
+    t.game:cancelSummon(); w:advance(1) -- the popup goes, declined in the game's own dialog
+    w:moveTo("Tra Veler", "stormwind", 20, 0) -- a walk within the landing window
+    assert.are.same({}, emitted(t, "ARRIVED"))
+    w:advance(31)
+    assert.are.equal("grouped", ride.state) -- the summon failed
+  end)
+
   it("while summoning, a short walk is no arrival, a jump of more than 100 yards is (R43)", function()
     local _, ride = grouped()
     w:offerSummon("Dar Kbolt", "Tra Veler"); w:advance(1)
+    w:fire(t, "SUMMON_GONE") -- accepted: the popup went (M8: a move with the popup up is not a landing)
     w:moveTo("Tra Veler", "ironforge", 60, 0)
     assert.are.equal("summoning", ride.state)
     w:moveTo("Tra Veler", "ironforge", 101, 0)
@@ -1139,7 +1171,11 @@ describe("Traveler", function()
     assert.is_false(t.engine:tradeOpenWithDriver(ride.rideId))
     assert.are.same({nil, "no_window"}, {t.engine:putTipInTrade(ride.rideId, 5000)})
     assert.is_nil(t.tradeMoney)
-    assert.is_true(t.engine:submitArrival(ride.rideId, nil, 10000)) -- Open trade
+    local sets = 0
+    local trySet = t.game.trySetTradeMoney
+    t.game.trySetTradeMoney = function(g, copper) sets = sets + 1; return trySet(g, copper) end
+    assert.are.same({true}, {t.engine:submitArrival(ride.rideId, nil, 10000)}) -- Open trade
+    assert.are.same({0, nil}, {sets, t.tradeMoney}) -- only the Put click sets money: the window may be another's (M2)
     assert.is_true(t.engine:tradeOpenWithDriver(ride.rideId))
     assert.is_false(t.engine:tradeOpenWithDriver("Dar Kbolt@Nob Ody@1"))
     assert.are.same({true, true}, {t.engine:putTipInTrade(ride.rideId, 5000)}) -- the fake game can set the money

@@ -57,7 +57,7 @@ local function build(view, link)
   f.put:SetWidth(328)
   f.put:SetWordWrap(true)
   W.paint(f.put, W.COLOR.gold)
-  f.putBtn = W.button(f, L.fmt("ARRIVE_PUT_BUTTON", "?"), 240, function()
+  f.putBtn = W.button(f, L.fmt("ARRIVE_PUT", "?"), 240, function()
     view:Put()
   end)
   f.putBtn:Hide()
@@ -114,21 +114,25 @@ local function newView(link)
     self:PaintPut()
   end
 
-  -- The Put button, there once Open trade was pressed and the game could not
-  -- put the money in itself: it names the tip picked now (the hint above it
-  -- follows) and is enabled while a trade window with the driver is open.
+  -- The Put button, there once Open trade was pressed and until its click put
+  -- the money in: it names the tip picked now (the hint above it follows) and
+  -- is enabled while a trade window with the driver is open. With "No tip"
+  -- picked the hint goes too.
   function view:PaintPut()
     local f, state = self.frame, self.state
     if f == nil or state == nil then
       return
     end
     local valid, tip = f.picker:Read()
+    if valid and tip == nil then
+      W.setText(f.put, "")
+    end
     local show = state.put == "need" and valid and tip ~= nil
     f.putBtn:SetShown(show)
     if show then
-      local money = Money.format(tip)
-      W.setText(f.putBtn, L.fmt("ARRIVE_PUT_BUTTON", money))
-      W.setText(f.put, L.fmt("ARRIVE_PUT", money))
+      local text = L.fmt("ARRIVE_PUT", Money.format(tip))
+      W.setText(f.putBtn, text)
+      W.setText(f.put, text)
       f.putBtn:SetEnabled(not link:dead() and link.engine:tradeOpenWithDriver(state.ride.rideId))
     end
   end
@@ -218,13 +222,13 @@ local function newView(link)
       return
     end
     local stars = ride.kind == "summon" and not state.rated and f.stars:GetValue() or 0
-    local ok, second = engine:submitArrival(ride.rideId, stars > 0 and stars or nil, tip)
+    local ok, why = engine:submitArrival(ride.rideId, stars > 0 and stars or nil, tip)
     if not ok then
-      if second == "no_trade" and stars > 0 then
+      if why == "no_trade" and stars > 0 then
         state.rated = true -- the rating went out before the game refused the trade
         f.stars:SetPickable(false)
       end
-      W.say(f.msg, explain(second), W.COLOR.red)
+      W.say(f.msg, explain(why), W.COLOR.red)
       self:PaintTrade()
       return
     end
@@ -236,9 +240,8 @@ local function newView(link)
       W.setText(f.msg, "")
     end
     if tip ~= nil then
-      local money = Money.format(tip)
-      state.put = second == true and "set" or "need"
-      W.setText(f.put, second == true and L.fmt("ARRIVE_SET", money) or L.fmt("ARRIVE_PUT", money))
+      state.put = "need" -- only the Put button's click puts the money in (M2, R64)
+      W.setText(f.put, L.fmt("ARRIVE_PUT", Money.format(tip)))
     end
     self:PaintTrade()
   end

@@ -25,8 +25,8 @@ describe("Reputation", function()
   end)
   it("query cooldown", function() assert.is_true(b.engine:query("Dar Kbolt")); w:advance(10); assert.is_false(b.engine:query("Dar Kbolt")); w:advance(600); assert.is_true(b.engine:query("Dar Kbolt")) end)
   it("alive evidence marks liar", function()
-    a.engine:send("RIDE_START", {rideId="x", warlock="Dar Kbolt"}, "CHANNEL"); w:advance(2)
-    b.engine.transport:receive("TaxiFvr", "d1:1/1:"..ns.Protocol.encode("DEATH", "d1", {rideId="x", victim="Ana Smith", warlock="Dar Kbolt", secs=10, source="self"}), "CHANNEL", "Ana Smith")
+    a.engine:send("RIDE_START", {rideId="Dar Kbolt@Ana Smith@30000", warlock="Dar Kbolt"}, "CHANNEL"); w:advance(2)
+    b.engine.transport:receive("TaxiFvr", "d1:1/1:"..ns.Protocol.encode("DEATH", "d1", {rideId="Dar Kbolt@Ana Smith@30000", victim="Ana Smith", warlock="Dar Kbolt", secs=10, source="self"}), "CHANNEL", "Ana Smith")
     w:advance(61); a.engine:send("REQUEST", {standId="s", offer=0, level=30}, "WHISPER", "Bo Lee"); w:advance(2)
     assert.is_truthy(b.engine.db.liars["Ana Smith"])
   end)
@@ -89,7 +89,7 @@ describe("Reputation sync", function()
   describe("ratings", function()
     it("keeps a heard rating as the sender's, with its share amounts, and marks the db dirty", function()
       assert.is_false(b.engine.dirty)
-      hear(b, "Cee One", "RATING", {kind = "share", target = "Dar Kbolt", stars = 2, id = "sh1", ts = now(), owed = 2500, received = 1000, pct = 25})
+      hear(b, "Cee One", "RATING", {kind = "share", target = "Dar Kbolt", stars = 2, id = "Dar Kbolt@59000:Cee One:59500", ts = now(), owed = 2500, received = 1000, pct = 25})
       local rec = share(b.engine.db, "Dar Kbolt")[1]
       assert.are.same({"Cee One", 2, 2500, 1000, 25}, {rec.rater, rec.stars, rec.owed, rec.received, rec.pct})
       assert.is_nil(rec.via)
@@ -240,7 +240,7 @@ describe("Reputation sync", function()
       for i = 1, 60 do
         local rater = "Clickerwithalongname Surnamewithlength" .. i
         assert.is_true(ns.Ratings.addDirect(b.engine.db, {kind = "share", rater = rater, target = "Dar Kbolt", stars = 3,
-          id = "Dar Kbolt@" .. rater .. "@" .. (START - 100 + i), ts = START - 100 + i, owed = 25000, received = 25000, pct = 25}, rater, now()))
+          id = "Dar Kbolt@" .. (START - 200) .. ":" .. rater .. ":" .. (START - 100 + i), ts = START - 100 + i, owed = 25000, received = 25000, pct = 25}, rater, now()))
       end
       c.engine:query("Dar Kbolt")
       w:advance(30)

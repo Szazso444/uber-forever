@@ -353,11 +353,26 @@ function M.new(parent, main)
         specs[#specs + 1] = requestRow(engine, stand, ride, actions)
       end
       for _, ride in ipairs(riding) do
-        specs[#specs + 1] = {
+        local spec = {
           title = ride.traveler,
           sub = rawget(L, "RIDER_" .. ride.state),
           right = ride.kind == "portal" and W.portalName(ride.dest) or nil,
         }
+        if ride.state == "accepted" then
+          -- Accepted but not in the group yet: the invite may have been lost
+          -- or turned down (Engine.reinvite starts the wait for him over).
+          local key, traveler = ride.key, ride.traveler
+          spec.buttons = {
+            {
+              text = L.REINVITE, width = 80, enabled = actions,
+              onClick = function()
+                local ok, why = engine:reinvite(key)
+                main:report(ok, why, L.fmt("NOTICE_REINVITED", tostring(traveler)))
+              end,
+            },
+          }
+        end
+        specs[#specs + 1] = spec
       end
 
       local talks = sortedKeys(stand.talks)

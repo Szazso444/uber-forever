@@ -161,6 +161,18 @@ local function identify(rec)
   return rater, target
 end
 
+-- Whether id is the id of rater's shift on a stand of target's (M9): Ledger
+-- makes shift ids standId:clicker:seconds, and stand ids are owner@seconds
+-- (R41), so the id names the stand's owner and the clicker. target is tidied.
+local function isShiftOf(id, rater, target)
+  local standId, clicker = id:match("^([^:]+):([^:]+):%d+$")
+  if standId == nil then
+    return false
+  end
+  local prefix = target .. "@"
+  return standId:sub(1, #prefix) == prefix and ns.Names.same(clicker, rater)
+end
+
 -- A fresh record from rec, holding only the fields that belong in one, with
 -- everything checked. Returns nil and a reason when something is wrong.
 local function build(rec, rater, target)
@@ -176,7 +188,8 @@ local function build(rec, rater, target)
   end
   local r = { kind = rec.kind, rater = rater, target = target, stars = rec.stars, id = rec.id, ts = rec.ts }
   if rec.kind == "share" then
-    if not validAmounts(rec) then
+    -- A share rating rates one shift: the rater's own, on the target's stand.
+    if not validAmounts(rec) or not isShiftOf(rec.id, rater, target) then
       return nil, "bad_record"
     end
     for _, field in ipairs(AMOUNTS) do

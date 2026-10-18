@@ -51,17 +51,21 @@ end
 local RANK = { GREEN = 0, YELLOW = 1, RED = 2 }
 local LEVELS = { [0] = "GREEN", "YELLOW", "RED" }
 
--- The level to show for a verdict (R61) and whether it has more checks than lines.
+-- The level to show for a verdict (R61). Every line the panel shows is judged,
+-- by the same index (a hole in the list is a line the panel shows as unknown):
+-- one that is not a check is RED, and a failed check is never better than
+-- YELLOW, whatever level it names.
 local function judge(verdict, checks)
   local rank = RANK[verdict.level] or RANK.RED
   if #checks == 0 or #checks > MAX_LINES then
     rank = RANK.RED
   end
-  for _, check in ipairs(checks) do
+  for i = 1, #checks do
+    local check = checks[i]
     if type(check) ~= "table" then
       rank = RANK.RED
     elseif check.ok ~= true then
-      rank = math.max(rank, RANK[check.level] or RANK.RED)
+      rank = math.max(rank, RANK.YELLOW, RANK[check.level] or RANK.RED)
     end
   end
   return LEVELS[rank]

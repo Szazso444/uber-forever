@@ -30,7 +30,8 @@ M.STATUS_CHANNEL_FULL = "Taxi needs a free chat channel. Leave one (e.g. /leave 
 M.STATUS_LOCKDOWN = "Paused (instance)"
 M.STATUS_UPDATE = "A newer Taxi version is in use. Please update."
 M.STATUS_LEAVE_GROUP = "Leave your group so the driver can invite you." -- App/Traveler.lua
-M.STATUS_RAID_FAILED = "Couldn't convert the group to a raid." -- App/Driver.lua (R53)
+M.STATUS_RAID_FAILED = "Couldn't convert the group to a raid. Convert it from the group menu, then press Accept again." -- App/Driver.lua (R53, spec §16 Q5)
+M.STATUS_STAND_MOVED = "Your stand closed because you moved away from it." -- App/Driver.lua
 M.STATUS_HC_DEAD = "Your Hardcore character has died." -- Core/Init.lua: every action is off
 
 -- Bootstrap (Core/Init.lua): chat lines and the /taxi command.
@@ -67,6 +68,7 @@ M.NOTICE_APP_DECLINED = "%s turned your application down."
 M.NOTICE_STAND_OPEN = "Your stand is open."
 M.NOTICE_STAND_CLOSED = "Your stand is closed."
 M.NOTICE_CONVERTING = "Converting the group to a raid..."
+M.NOTICE_REINVITED = "Invited %s again."
 M.MINIMAP_TIP = "Click to open Taxi. Drag to move this button."
 
 -- Why an action was refused (the reason codes the Engine's methods return).
@@ -174,6 +176,7 @@ M.SEC_CREW = "Crew"
 M.SEC_PAYOUTS = "Payouts"
 M.ACCEPT = "Accept"
 M.DECLINE = "Decline"
+M.REINVITE = "Re-invite"
 M.CONVERT = "Convert to raid & invite"
 M.DISMISS = "Dismiss"
 M.PAY = "Pay"
@@ -277,8 +280,7 @@ M.ARRIVE_RATE = "Rate %s (Trust):"
 M.ARRIVE_TIP = "Tip:"
 M.ARRIVE_TRADE = "Open trade with %s"
 M.ARRIVE_SEND_RATING = "Send rating"
-M.ARRIVE_PUT = "Put %s in the trade"
-M.ARRIVE_PUT_BUTTON = "Put %s in the trade"
+M.ARRIVE_PUT = "Put %s in the trade" -- the hint, and the Put button's label
 M.ARRIVE_SET = "%s is in the trade. Check it and accept."
 M.ARRIVE_RATED = "Rating sent."
 M.ARRIVE_STAY = "Stay and click"
@@ -336,7 +338,7 @@ M.SIM_PORTAL_FAILED = "The portal would not take you."
 M.SIM_STEPPED = "You stepped through the portal to %s."
 M.SIM_CLICKER_ASKS = "%s asks %s for %d%% of the tips. Answer in %s's clicker offer window."
 M.SIM_KILLED = "You died. A Hardcore death is final: /taxi sim off, then /taxi sim, to start over."
-M.SIM_NO_TRADE = "Open a trade first: arrival window, Open trade."
+M.SIM_NO_TRADE = "Put the tip in a trade first: arrival window, Open trade, then Put."
 M.SIM_TRADE_FAILED = "The trade failed. Is there enough gold?"
 M.SIM_TRADED = "You gave %s to %s."
 M.SIM_NO_SHIFT = "Nobody is on a shift."

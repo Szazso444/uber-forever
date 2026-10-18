@@ -524,11 +524,12 @@ end
 
 -- Arrival ------------------------------------------------------------------------------------
 
--- Whether a move is the landing of my ride's own summon (R43): while the
--- summon is on screen, or within LANDING_WINDOW after it went away (after that
--- SUMMON_GONE's timer has failed the summon), I changed map or am more than
--- JUMP_YARDS from where it found me. Wherever I landed: a summon to the wrong
--- place is still the warlock's. A summon I declined never lands.
+-- Whether a move looks like the landing of my ride's own summon (R43): while
+-- the summon is on screen, or within LANDING_WINDOW after it went away (after
+-- that SUMMON_GONE's timer has failed the summon), I changed map or am more
+-- than JUMP_YARDS from where it found me. Wherever I landed: a summon to the
+-- wrong place is still the warlock's. A summon I declined never lands. It is
+-- the landing only once the popup is gone (MOVED, M8).
 local function landed(ride, loc)
   local from = ride.summon
   if ride.state ~= "summoning" or from == nil or from.declined then
@@ -583,6 +584,17 @@ local function arrive(e, ride, loc)
   e:emit("ARRIVED", ride)
 end
 
+-- Whether the summon that found me is still on screen (M8): its popup's end
+-- was not seen and the game still names a summoner. A move while it is up is
+-- my own (a flight path, a hearthstone), never its landing.
+local function stillOffered(e, summon)
+  if summon.goneAt ~= nil then
+    return false
+  end
+  local ok, facts = pcall(e.game.summonFacts, e.game)
+  return ok and type(facts) == "table"
+end
+
 Engine.gameHandlers.MOVED = function(e)
   local loc = e.game:location()
   if type(loc) ~= "table" then
@@ -590,7 +602,14 @@ Engine.gameHandlers.MOVED = function(e)
   end
   for _, ride in pairs(e.rides) do
     if isMine(e, ride) and arrivedAt(ride, loc) then
-      arrive(e, ride, loc)
+      if ride.kind == "summon" and stillOffered(e, ride.summon) then
+        -- Not the summon's landing. Where it finds me now is where it would
+        -- land me from, so a later move is judged from here.
+        local from = ride.summon
+        from.mapID, from.wx, from.wy = loc.mapID, loc.wx, loc.wy
+      else
+        arrive(e, ride, loc)
+      end
     end
   end
 end
@@ -603,11 +622,13 @@ Engine.gameHandlers.MOVED = recheck
 
 -- Rates the ride (summon rides only) and opens the trade for a tip. Every
 -- check comes first, so nothing happens unless all of it can. stars: 1 to 5,
--- or nil for no rating; tip: copper, or nil for no tip. Returns true and
--- whether the tip could be put in the trade window (nil without a tip), or
--- nil and "unknown_ride", "not_arrived", "no_rating_for_portals",
--- "bad_stars", "zero" / "too_much" (Money.validateTip), "no_trade" or a
--- Ratings reason.
+-- or nil for no rating; tip: copper, or nil for no tip. Returns true, or nil
+-- and "unknown_ride", "not_arrived", "no_rating_for_portals", "bad_stars",
+-- "zero" / "too_much" (Money.validateTip), "no_trade" or a Ratings reason.
+-- The money is not put in the trade here: the window that opens may not be the
+-- driver's yet (another player's trade can be open), so only the arrival
+-- window's Put button does that, from the player's own click (putTipInTrade,
+-- R64).
 Engine.submitArrival = Engine.action(function(e, rideId, stars, tip)
   local ride = rideById(e, rideId)
   if ride == nil then
@@ -650,7 +671,7 @@ Engine.submitArrival = Engine.action(function(e, rideId, stars, tip)
   if not e.game:openTrade(ride.driver) then
     return nil, "no_trade"
   end
-  return true, e.game:trySetTradeMoney(tip) == true
+  return true
 end)
 
 -- Whether a trade window with this ride's driver is open now: the arrival

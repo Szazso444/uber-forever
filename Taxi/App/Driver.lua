@@ -215,7 +215,8 @@ Engine.openStand = Engine.action(function(e, o)
 end)
 
 -- The agreed spot stops being true once I walk away from it: more than
--- STAND_MOVE_YARDS, onto another map, or somewhere the game can't place.
+-- STAND_MOVE_YARDS, onto another map, or somewhere the game can't place. The
+-- player is told why the stand closed (STATUS_STAND_MOVED).
 Engine.gameHandlers.MOVED = function(e)
   local stand = e.stand
   if stand == nil then
@@ -225,6 +226,7 @@ Engine.gameHandlers.MOVED = function(e)
   if type(loc) ~= "table" or loc.mapID ~= stand.mapID or not (finite(loc.wx) and finite(loc.wy))
     or Stand.movedTooFar(stand, loc.wx, loc.wy) then
     e:closeStand()
+    e:status("STATUS_STAND_MOVED")
   end
 end
 
