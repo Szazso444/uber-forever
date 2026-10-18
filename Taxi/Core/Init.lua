@@ -89,12 +89,26 @@ local function login()
   state.engine = engine
   ns.engine = engine
 
-  -- Statuses are said in chat and kept: ns.status lets a window opened later
-  -- show one said at login (a dead Hardcore character, a newer TaxiDB).
+  -- The window and the minimap button (UI/MainWindow.lua). A failure there is
+  -- logged and must not stop the Engine.
+  local main = ns.UI and ns.UI.Main
+  if main then
+    local ok, err = pcall(main.Start, main)
+    if not ok then
+      log("UI start: " .. tostring(err))
+    end
+  end
+
+  -- Statuses are kept (/taxi debug shows the last, ns.status is for a window
+  -- built later) and shown in the window's footer while it is open. With it
+  -- closed there is nowhere else to see one (a full channel list, a newer
+  -- version, a raid that would not convert), so they are said in chat then.
   engine:on("STATUS", function(key, line)
     state.status = line
     ns.status = { key = key, text = line }
-    say(line)
+    if not (main and main:IsShown()) then
+      say(line)
+    end
   end)
   backend.listen(function(prefix, message, dist, sender)
     transport:receive(prefix, message, dist, sender)

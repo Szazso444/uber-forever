@@ -898,6 +898,53 @@ describe("Init", function()
     assert.truthy(table.concat(w.prints, "\n"):find("bad ||cff00ff00 name", 1, true))
   end)
 
+  -- Boots with a stand-in for the main window (UI/MainWindow.lua), which these
+  -- tests do not load: Start and IsShown are what Init calls.
+  local function bootWithWindow(main)
+    ns = Taxi.load()
+    ns.UI = { Main = main }
+    w, env = fakeWoW()
+    run("Taxi/Game/WoW.lua", env, ns)
+    run("Taxi/Core/Init.lua", env, ns)
+    w.fire("ADDON_LOADED", "Taxi", false)
+    w.fire("PLAYER_LOGIN")
+  end
+
+  it("starts the main window once the engine exists", function()
+    local seenEngine
+    local main
+    main = { IsShown = function() return false end,
+      Start = function(self)
+        assert.are.equal(main, self)
+        seenEngine = ns.engine
+      end }
+    bootWithWindow(main)
+    assert.are.equal(ns.engine, seenEngine)
+    assert.is_not_nil(seenEngine)
+  end)
+
+  it("logs a window that fails to start and carries on (R15)", function()
+    bootWithWindow({ IsShown = function() return false end, Start = function() error("no frames") end })
+    assert.is_not_nil(ns.engine)
+    env.SlashCmdList.TAXI("debug")
+    local text = table.concat(w.prints, "\n")
+    assert.truthy(text:find("UI start:", 1, true))
+    assert.truthy(text:find("no frames", 1, true))
+  end)
+
+  it("says a status in chat only while the window is closed, since its footer shows it otherwise", function()
+    local shown = false
+    bootWithWindow({ IsShown = function() return shown end, Start = function() end })
+    w.prints = {}
+    ns.engine:status("STATUS_LEAVE_GROUP")
+    assert.are.same({ "Taxi: " .. ns.L.STATUS_LEAVE_GROUP }, w.prints)
+    shown = true
+    w.prints = {}
+    ns.engine:status("STATUS_RAID_FAILED")
+    assert.are.same({}, w.prints)
+    assert.are.same({ key = "STATUS_RAID_FAILED", text = ns.L.STATUS_RAID_FAILED }, ns.status) -- still kept
+  end)
+
   it("toggles the main window on /taxi, and explains itself without one", function()
     boot(nil)
     env.SlashCmdList.TAXI("")

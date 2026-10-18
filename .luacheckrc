@@ -73,8 +73,24 @@ local game_layer = {
 }
 
 files["Taxi/Game"] = game_layer
-files["Taxi/UI"] = game_layer
 files["Taxi/Core/Init.lua"] = game_layer
+
+-- The windows (Taxi/UI) talk to the Engine, not to the game, so they get only
+-- the frame API and what the widgets read: no unit, group or spell calls, and
+-- no globals of their own to write.
+files["Taxi/UI"] = {
+  read_globals = {
+    "CreateFrame",
+    "UIParent", -- frames from FrameXML
+    "Minimap",
+    "GameTooltip",
+    "InCombatLockdown", -- the secure button's attributes change only out of combat
+    "UnitAffectingCombat",
+    "GetCursorPosition", -- dragging the minimap button
+    "date", -- legacy (WoW's os.date): the History tab's times
+    "UISpecialFrames", -- legacy: the names of the frames Esc closes (checked in game, Task 19)
+  },
+}
 
 -- Specs and the helper: busted's globals, plus the Taxi loader the helper defines.
 files["tests"] = {
