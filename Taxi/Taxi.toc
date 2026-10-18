@@ -1,0 +1,47 @@
+## Interface: 16001
+## Title: Taxi
+## Notes: Trust-based summon and portal board for WoW Forever
+## Version: 0.1.0
+## SavedVariables: TaxiDB
+## SavedVariablesPerCharacter: TaxiCharDB
+
+Core\Config.lua
+Core\Locale.lua
+Core\Callbacks.lua
+Domain\Util.lua
+Domain\Names.lua
+Domain\Money.lua
+Domain\Store.lua
+Domain\Stand.lua
+Domain\Board.lua
+Domain\Negotiation.lua
+Domain\Ride.lua
+Domain\SummonGuard.lua
+Domain\Ratings.lua
+Domain\Witness.lua
+Domain\Ledger.lua
+Comms\Protocol.lua
+Comms\Transport.lua
+App\Engine.lua
+App\Reputation.lua
+App\Driver.lua
+App\Traveler.lua
+App\Clicker.lua
+Sim\Clock.lua
+Sim\Bus.lua
+Sim\World.lua
+Sim\FakeGame.lua
+Game\WoW.lua
+UI\Widgets.lua
+UI\MainWindow.lua
+UI\StandList.lua
+UI\MyStand.lua
+UI\Clicking.lua
+UI\History.lua
+UI\MinimapButton.lua
+UI\Dialogs.lua
+UI\GuardPanel.lua
+UI\ArrivalWindow.lua
+UI\ShiftEndWindow.lua
+UI\SimControls.lua
+Core\Init.lua

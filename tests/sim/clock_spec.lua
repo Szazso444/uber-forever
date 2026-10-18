@@ -1,0 +1,77 @@
+describe("Clock", function()
+  local ns, clock, log
+  before_each(function()
+    ns = Taxi.load()
+    clock = ns.Clock.new(100)
+    log = {}
+  end)
+  local function mark(name) return function() log[#log + 1] = name .. "@" .. clock:now() end end
+
+  it("starts at the given time, or at 0", function()
+    assert.are.equal(100, clock:now())
+    assert.are.equal(0, ns.Clock.new():now())
+  end)
+
+  it("advances time", function()
+    clock:advance(2.5)
+    assert.are.equal(102.5, clock:now())
+  end)
+
+  it("runs a timer once it is due, and only then", function()
+    clock:after(5, mark("a"))
+    clock:advance(4.9)
+    assert.are.same({}, log)
+    clock:advance(0.1)
+    assert.are.same({"a@105"}, log)
+    clock:advance(10)
+    assert.are.same({"a@105"}, log)
+  end)
+
+  it("shows each timer its own due time as now() and ends at the target", function()
+    clock:after(1, mark("a"))
+    clock:after(3, mark("b"))
+    clock:advance(10)
+    assert.are.same({"a@101", "b@103"}, log)
+    assert.are.equal(110, clock:now())
+  end)
+
+  it("runs timers in time order, ties in the order they were scheduled", function()
+    clock:after(3, mark("late"))
+    clock:after(1, mark("first"))
+    clock:after(2, mark("tie1"))
+    clock:after(2, mark("tie2"))
+    clock:advance(5)
+    assert.are.same({"first@101", "tie1@102", "tie2@102", "late@103"}, log)
+  end)
+
+  it("runs timers scheduled during the advance when they fall inside it", function()
+    clock:after(1, function()
+      log[#log + 1] = "a@" .. clock:now()
+      clock:after(1, mark("b"))     -- due at 102, inside the advance
+      clock:after(20, mark("far"))  -- due at 121, outside
+    end)
+    clock:advance(5)
+    assert.are.same({"a@101", "b@102"}, log)
+    clock:advance(20)
+    assert.are.same({"a@101", "b@102", "far@121"}, log)
+  end)
+
+  it("runs a zero-delay timer on the next advance, even a zero one", function()
+    clock:after(0, mark("now"))
+    assert.are.same({}, log)
+    clock:advance(0)
+    assert.are.same({"now@100"}, log)
+  end)
+
+  it("refuses to run backwards", function()
+    assert.has_error(function() clock:advance(-1) end)
+    assert.has_error(function() clock:after(-1, function() end) end)
+  end)
+
+  it("keeps clocks apart", function()
+    local other = ns.Clock.new(0)
+    other:after(1, mark("other"))
+    clock:advance(5)
+    assert.are.same({}, log)
+  end)
+end)
