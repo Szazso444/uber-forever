@@ -176,13 +176,23 @@ end
 
 local ACTIONS = {}
 
+-- You take the invite you were sent. The game does not take a second group, so
+-- the first is left before, as the player would have to (the Engine said so:
+-- "Leave your group so the driver can invite you.").
 function ACTIONS.invite(s)
   local inviter = s.you.invitedBy
+  if inviter == nil then
+    return L.SIM_NO_INVITE
+  end
+  local switched = s.you.group ~= nil
+  if switched then
+    s.world:leaveGroup(s.you, false)
+  end
   if not s.world:acceptInvite(YOU) then
     return L.SIM_NO_INVITE
   end
   step(s, 1)
-  return L.fmt("SIM_JOINED", tostring(inviter))
+  return L.fmt(switched and "SIM_SWITCHED" or "SIM_JOINED", tostring(inviter))
 end
 
 function ACTIONS.green(s)
