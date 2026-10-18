@@ -30,6 +30,21 @@ M.STATUS_CHANNEL_FULL = "Taxi needs a free chat channel. Leave one (e.g. /leave 
 M.STATUS_LOCKDOWN = "Paused (instance)"
 M.STATUS_UPDATE = "A newer Taxi version is in use. Please update."
 M.STATUS_LEAVE_GROUP = "Leave your group so the driver can invite you." -- App/Traveler.lua
+M.STATUS_HC_DEAD = "Your Hardcore character has died." -- Core/Init.lua: every action is off
+
+-- Bootstrap (Core/Init.lua): chat lines and the /taxi command.
+M.CHAT_PREFIX = "Taxi: "
+M.SLASH_USAGE = "/taxi opens the window; /taxi debug shows version, status and errors."
+M.START_FAILED = "Taxi could not start. /taxi debug shows why."
+M.DEBUG_VERSION = "Taxi %s · protocol %d · data %d"
+M.DEBUG_STATE = "Engine %s · Hardcore %s · last status: %s"
+M.DEBUG_NOT_BUILT = "not built"
+M.DEBUG_STARTING = "starting"
+M.DEBUG_RUNNING = "running"
+M.DEBUG_DISABLED = "disabled (no channel)"
+M.DEBUG_NONE = "none"
+M.DEBUG_SESSION_ONLY = "Saved data is from a newer Taxi, so nothing from this session is saved."
+M.DEBUG_ERRORS = "%d errors logged; the last %d:"
 
 function M.fmt(key, ...)
   return string.format(M[key], ...)

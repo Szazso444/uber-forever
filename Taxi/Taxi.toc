@@ -1,6 +1,7 @@
 ## Interface: 16001
 ## Title: Taxi
 ## Notes: Trust-based summon and portal board for WoW Forever
+## Version: 0.1.0
 ## SavedVariables: TaxiDB
 ## SavedVariablesPerCharacter: TaxiCharDB
 
@@ -30,3 +31,5 @@ Sim\Clock.lua
 Sim\Bus.lua
 Sim\World.lua
 Sim\FakeGame.lua
+Game\WoW.lua
+Core\Init.lua
