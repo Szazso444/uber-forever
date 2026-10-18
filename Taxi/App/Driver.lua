@@ -22,6 +22,7 @@ local Stand, Ride, Negotiation, Ledger, Ratings = ns.Stand, ns.Ride, ns.Negotiat
 
 local LOCK_LEVEL = 20 -- Ritual of Summoning is learned at 20
 local INVITE_TIMEOUT = 60 -- seconds an accepted traveler has to join the group
+local RAID_TIMEOUT = 5 -- seconds convertAndAccept waits for the group to become a raid (R53)
 local MAX_SEATS = 37 -- a raid of 40, less the warlock and two clickers
 local MAX_OFFERED_PCT = 50 -- two clickers at this share leave the owner nothing
 local MAX_CLICKERS = 2 -- as Stand.addClicker allows
@@ -375,14 +376,51 @@ Engine.reinvite = Engine.action(function(e, key)
 end)
 
 -- The toast's "Convert to raid & invite": the conversion is the player's own
--- click, then the request is accepted.
+-- click. The game makes the raid on a later roster update, so the request is
+-- accepted on the first GROUP_CHANGED that finds a raid (R53); a conversion
+-- not seen within RAID_TIMEOUT seconds is given up with STATUS_RAID_FAILED.
+-- Returns the ride id when already in a raid, true when the accept waits for
+-- the conversion, or nil and "unknown_ride".
 Engine.convertAndAccept = Engine.action(function(e, key)
   if waiting(e, key) == nil then
     return nil, "unknown_ride"
   end
+  if e.game:isRaid() then
+    return e:acceptRequest(key)
+  end
+  local pending = e.raidPending
+  if pending == nil then
+    pending = {}
+    e.raidPending = pending
+    e.clock:after(RAID_TIMEOUT, function()
+      if not e.stopped and e.raidPending == pending then
+        e.raidPending = nil
+        e:safely("raid timeout", e.status, e, "STATUS_RAID_FAILED")
+      end
+    end)
+  end
+  local queued = false
+  for _, k in ipairs(pending) do
+    queued = queued or k == key
+  end
+  if not queued then
+    pending[#pending + 1] = key
+  end
   e.game:convertToRaid()
-  return e:acceptRequest(key)
+  return true
 end)
+
+-- The raid convertAndAccept waited for is there: accept, in click order.
+Engine.gameHandlers.GROUP_CHANGED = function(e)
+  local pending = e.raidPending
+  if pending == nil or not e.game:isRaid() then
+    return
+  end
+  e.raidPending = nil
+  for _, key in ipairs(pending) do
+    e:acceptRequest(key)
+  end
+end
 
 -- Turns the request under key down; DECLINE carries the reason. Returns true,
 -- or nil and "unknown_ride".

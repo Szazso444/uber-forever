@@ -72,7 +72,7 @@ local function text(s)
 end
 
 local function number(n)
-  if type(n) ~= "number" or n ~= n or n == math.huge or n == -math.huge then
+  if type(n) ~= "number" or isSecret(n) or n ~= n or n == math.huge or n == -math.huge then
     return nil
   end
   return n
@@ -102,14 +102,16 @@ local function canonical(name)
   return text(Names.normalize(name))
 end
 
--- The full name of a unit ("player", "party1", "raid7", "NPC"), or nil.
+-- The full name of a unit ("player", "party1", "raid7", "NPC"), or nil. The
+-- game's placeholder for a name it hasn't loaded yet (UNKNOWNOBJECT, "Unknown")
+-- is no name (R55).
 local function fullName(unit)
   if type(unit) ~= "string" or not UnitExists(unit) then
     return nil
   end
   local name, realm = UnitName(unit)
   name, realm = text(name), text(realm)
-  if name == nil then
+  if name == nil or name == UNKNOWNOBJECT or name == "Unknown" then
     return nil
   end
   if realm ~= nil then
@@ -351,15 +353,16 @@ function Game:openTrade(name)
   return true
 end
 
--- Puts copper in the open trade window. False while no window is open (the
--- request openTrade sent has not been answered yet) or when the game refuses;
--- the player then puts it in by hand. Restricted in Forever (HasRestrictions),
--- so it is only tried from the player's own click.
+-- Tries to put copper in the open trade window (none is open right after
+-- openTrade: the request has not been answered yet), and returns false either
+-- way: Forever's API has no getter to read the amount back, so success can't
+-- be known and the UI always shows "Put X in the trade" (R55). Restricted in
+-- Forever (HasRestrictions), so it is only tried from the player's own click.
 function Game:trySetTradeMoney(copper)
-  if not self.tradeOpen then
-    return false
+  if self.tradeOpen then
+    pcall(C_TradeInfo.SetTradeMoney, copper)
   end
-  return (pcall(C_TradeInfo.SetTradeMoney, copper))
+  return false
 end
 
 -- Other -----------------------------------------------------------------------------------
@@ -552,10 +555,12 @@ EVENTS.UNIT_FLAGS = function(g, unit)
 end
 
 -- In a trade the partner is the unit "NPC". Without it no partner is named,
--- and the trade is not reported: a guess could credit the wrong player.
+-- and the trade is not reported: a guess could credit the wrong player. A
+-- trade whose starting money the game doesn't give is not followed (R55).
 EVENTS.TRADE_SHOW = function(g)
   g.tradeOpen = true
-  g.trade = { partner = fullName("NPC"), money = number(GetMoney()) or 0 }
+  local money = number(GetMoney())
+  g.trade = money ~= nil and { partner = fullName("NPC"), money = money } or nil
 end
 
 EVENTS.UI_INFO_MESSAGE = function(g, _, message)
@@ -591,8 +596,15 @@ end
 
 -- Starts translating game events: emit(event, ...) gets the events listed at
 -- the top of this file; errors go to log(text). Call once.
+-- The poll is armed first and the first reads run through safely, so a read
+-- that fails at login can't stop the poll (R55).
 function Game:listen(emit, log)
   self.emit, self.log = emit, log
+  local function tick()
+    C_Timer.After(POLL_SECONDS, tick)
+    self:safely("poll", self.poll)
+  end
+  C_Timer.After(POLL_SECONDS, tick)
   local frame = CreateFrame("Frame")
   for event in pairs(EVENTS) do
     frame:RegisterEvent(event)
@@ -600,16 +612,15 @@ function Game:listen(emit, log)
   frame:SetScript("OnEvent", function(_, event, ...)
     self:safely(event, EVENTS[event], ...)
   end)
-  if IsInGuild() then
-    C_GuildInfo.GuildRoster()
-  end
-  self:readGuild()
-  self.lastSpot = spot()
-  local function tick()
-    C_Timer.After(POLL_SECONDS, tick)
-    self:safely("poll", self.poll)
-  end
-  C_Timer.After(POLL_SECONDS, tick)
+  self:safely("guild roster", function(g)
+    if IsInGuild() then
+      C_GuildInfo.GuildRoster()
+    end
+    g:readGuild()
+  end)
+  self:safely("position", function(g)
+    g.lastSpot = spot()
+  end)
 end
 
 ns.WoWGame = M
@@ -650,10 +661,10 @@ function Backend.new(channelName)
     local frame = CreateFrame("Frame")
     frame:RegisterEvent("CHAT_MSG_ADDON")
     frame:SetScript("OnEvent", function(_, _, prefix, message, dist, sender)
-      if prefix ~= Config.PREFIX then
-        return
-      end
       local ok, err = pcall(function()
+        if prefix ~= Config.PREFIX then -- inside the pcall: a secret prefix can't be compared (R55)
+          return
+        end
         local name = canonical(sender)
         if name ~= nil then
           fn(prefix, message, dist, name)

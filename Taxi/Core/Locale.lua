@@ -30,6 +30,7 @@ M.STATUS_CHANNEL_FULL = "Taxi needs a free chat channel. Leave one (e.g. /leave 
 M.STATUS_LOCKDOWN = "Paused (instance)"
 M.STATUS_UPDATE = "A newer Taxi version is in use. Please update."
 M.STATUS_LEAVE_GROUP = "Leave your group so the driver can invite you." -- App/Traveler.lua
+M.STATUS_RAID_FAILED = "Couldn't convert the group to a raid." -- App/Driver.lua (R53)
 M.STATUS_HC_DEAD = "Your Hardcore character has died." -- Core/Init.lua: every action is off
 
 -- Bootstrap (Core/Init.lua): chat lines and the /taxi command.

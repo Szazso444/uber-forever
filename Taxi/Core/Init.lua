@@ -10,9 +10,11 @@ local MAX_ERRORS = 50 -- errors kept for /taxi debug (R15)
 -- Seconds after the first PLAYER_ENTERING_WORLD before the channel is joined,
 -- so the game's own channels (General, Trade) keep their usual numbers.
 local JOIN_DELAY = 5
--- Seconds between that join and Engine:start, which checks it: the channel id
--- may take a moment to show up.
-local START_DELAY = 2
+-- The server answers a join a moment later: the channel's id is looked for
+-- every JOIN_POLL seconds, for up to JOIN_TIMEOUT seconds (R54).
+local JOIN_POLL = 0.5
+local JOIN_TIMEOUT = 10
+local PREFIX_OK = 0 -- Enum.RegisterAddonMessagePrefixResult.Success
 
 local state = {
   errors = {}, -- the last MAX_ERRORS error lines
@@ -56,7 +58,10 @@ local function loaded()
     TaxiCharDB.stand = { seats = Config.DEFAULT_SEATS, clickerPct = Config.DEFAULT_CLICKER_PCT, note = "" }
   end
 
-  C_ChatInfo.RegisterAddonMessagePrefix(Config.PREFIX)
+  local result = C_ChatInfo.RegisterAddonMessagePrefix(Config.PREFIX)
+  if result ~= PREFIX_OK then
+    log("RegisterAddonMessagePrefix " .. Config.PREFIX .. ": " .. tostring(result))
+  end
   state.loaded = true
 end
 
@@ -67,6 +72,9 @@ local function login()
     loaded()
   end
   local game = ns.WoWGame.new()
+  if game:me() == nil then
+    error("the game gives no name for the player") -- the Engine can't tell its own messages apart
+  end
   local backend = ns.WoWBackend.new(Config.CHANNEL)
   -- Built without callbacks: Engine.new connects them (R40).
   local transport = ns.Transport.new{ backend = backend, clock = ns.WoWPreciseClock, prefix = Config.PREFIX }
@@ -106,7 +114,24 @@ local function login()
   end
 end
 
--- The first PLAYER_ENTERING_WORLD: join the channel, then start the Engine.
+local function inChannel()
+  local id = GetChannelName(Config.CHANNEL)
+  return type(id) == "number" and id > 0
+end
+
+local function start(engine)
+  local ok, err = pcall(engine.start, engine)
+  if ok then
+    state.started = true
+  else
+    log("start: " .. tostring(err))
+    say(L.START_FAILED)
+  end
+end
+
+-- The first PLAYER_ENTERING_WORLD: join the channel, wait for its id, then
+-- start the Engine. With no id after JOIN_TIMEOUT the Engine starts anyway,
+-- finds no channel and says STATUS_CHANNEL_FULL (R54).
 local function enteredWorld()
   local engine = state.engine
   if state.starting or engine == nil then
@@ -114,16 +139,24 @@ local function enteredWorld()
   end
   state.starting = true
   C_Timer.After(JOIN_DELAY, function()
-    pcall(engine.game.joinChannel, engine.game, Config.CHANNEL)
-    C_Timer.After(START_DELAY, function()
-      local ok, err = pcall(engine.start, engine)
-      if ok then
-        state.started = true
-      else
-        log("start: " .. tostring(err))
-        say(L.START_FAILED)
+    local checked, already = pcall(inChannel)
+    if not (checked and already) then
+      local ok, why = pcall(JoinChannelByName, Config.CHANNEL)
+      if not ok then
+        log("JoinChannelByName: " .. tostring(why))
       end
-    end)
+    end
+    local waited = 0
+    local function check()
+      local ok, ready = pcall(inChannel)
+      if (ok and ready) or waited >= JOIN_TIMEOUT then
+        start(engine)
+        return
+      end
+      waited = waited + JOIN_POLL
+      C_Timer.After(JOIN_POLL, check)
+    end
+    check()
   end)
 end
 
@@ -187,24 +220,33 @@ end
 
 -- Events ------------------------------------------------------------------------------
 
+-- Runs fn; an error goes to the log sink (R55). Returns whether fn ran.
+local function guarded(event, fn)
+  local ok, err = pcall(fn)
+  if not ok then
+    log(event .. ": " .. tostring(err))
+  end
+  return ok
+end
+
 local frame = CreateFrame("Frame")
 frame:RegisterEvent("ADDON_LOADED")
 frame:RegisterEvent("PLAYER_LOGIN")
 frame:RegisterEvent("PLAYER_ENTERING_WORLD")
 frame:RegisterEvent("PLAYER_LOGOUT")
 frame:SetScript("OnEvent", function(_, event, arg)
-  if event == "ADDON_LOADED" and arg == addonName then
-    frame:UnregisterEvent("ADDON_LOADED")
-    loaded()
+  if event == "ADDON_LOADED" then
+    if arg == addonName then
+      frame:UnregisterEvent("ADDON_LOADED")
+      guarded(event, loaded)
+    end
   elseif event == "PLAYER_LOGIN" then
-    local ok, err = pcall(login)
-    if not ok then
-      log("login: " .. tostring(err))
+    if not guarded(event, login) then
       say(L.START_FAILED)
     end
   elseif event == "PLAYER_ENTERING_WORLD" then
-    enteredWorld()
+    guarded(event, enteredWorld)
   elseif event == "PLAYER_LOGOUT" then
-    logout()
+    guarded(event, logout)
   end
 end)

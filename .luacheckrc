@@ -21,6 +21,7 @@ local wow_api = {
   "issecretvalue",
   -- names and units
   "GetNormalizedRealmName",
+  "UNKNOWNOBJECT", -- legacy (a GlobalStrings text: the name placeholder)
   "UnitExists",
   "UnitName",
   "UnitFactionGroup",

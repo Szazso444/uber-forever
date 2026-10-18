@@ -299,6 +299,7 @@ describe("Engine core", function()
       assert.is_true(w:acceptInvite("Bo Lee"))
       assert.are.equal("PARTY", a.engine:groupDist())
       a.game:convertToRaid()
+      w:advance(0.2) -- the conversion lands on the next step (R53)
       assert.are.equal("RAID", a.engine:groupDist())
     end)
 

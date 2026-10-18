@@ -175,6 +175,9 @@ describe("World", function()
       assert.is_false(w:acceptInvite("Mem Ber5"))
       for i = #seen, 1, -1 do seen[i] = nil end
       lead.game:convertToRaid()
+      -- R53: as in the game, the conversion itself lands on the next step
+      assert.is_false(lead.game:isRaid())
+      assert.are.equal(0, #seen)
       w:advance(0.2) -- game events caused by the player's own API calls arrive on the next frame
       assert.are.equal(5, #seen)
       assert.is_true(lead.game:isRaid())

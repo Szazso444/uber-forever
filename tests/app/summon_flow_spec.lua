@@ -88,8 +88,13 @@ describe("summon flow", function()
     assert.is_string(lock.engine:acceptRequest("Tre Two#"..s.standId))
     assert.are.same({nil, "needs_raid"}, {lock.engine:acceptRequest("Tre Three#"..s.standId)})
     assert.is_false(lock.game:isRaid())
-    assert.is_string(lock.engine:convertAndAccept("Tre Three#"..s.standId))
+    -- R53: the game converts on a later roster update; the accept waits for it.
+    assert.is_true(lock.engine:convertAndAccept("Tre Three#"..s.standId))
+    assert.is_false(lock.game:isRaid())
+    assert.are.equal("requested", lock.engine.rides["Tre Three#"..s.standId].state)
+    w:advance(0.2)
     assert.is_true(lock.game:isRaid())
+    assert.are.equal("accepted", lock.engine.rides["Tre Three#"..s.standId].state)
     w:advance(2)
     for _, name in ipairs{"Tra Veler", "Tre Two", "Tre Three"} do assert.is_true(w:acceptInvite(name), name) end
     w:advance(1)
@@ -97,6 +102,43 @@ describe("summon flow", function()
     assert.are.same({"Tra Veler", "Tre Two", "Tre Three"}, lock.engine.stand.travelers)
     assert.are.equal("grouped", t3.engine.rides["Tre Three#"..s.standId].state)
   end)
+  it("a raid conversion that never happens gives up after 5 s (R53)", function()
+    local t2 = w:addPlayer{name="Tre Two", class="MAGE", level=44, place="ironforge"}
+    local t3 = w:addPlayer{name="Tre Three", class="DRUID", level=44, place="ironforge"}
+    local s = crewUp()
+    for _, p in ipairs{t, t2, t3} do assert.is_table(p.engine:requestRide(s.standId, 0)) end
+    w:advance(2)
+    lock.engine:acceptRequest("Tra Veler#"..s.standId); lock.engine:acceptRequest("Tre Two#"..s.standId)
+    local convert = lock.game.convertToRaid
+    lock.game.convertToRaid = function() end -- the game refuses (say, not the leader)
+    local key = "Tre Three#"..s.standId
+    local function failures()
+      local n = 0
+      for _, ev in ipairs(emitted(lock, "STATUS")) do if ev[2] == "STATUS_RAID_FAILED" then n = n + 1 end end
+      return n
+    end
+    assert.is_true(lock.engine:convertAndAccept(key))
+    w:advance(4.8)
+    assert.are.equal(0, failures())
+    w:advance(0.4)
+    assert.are.equal(1, failures())
+    assert.are.same({"STATUS", "STATUS_RAID_FAILED", "Couldn't convert the group to a raid."}, last(lock, "STATUS"))
+    assert.are.equal("requested", lock.engine.rides[key].state)
+    -- the wait is over: a raid made later doesn't accept the request by itself
+    lock.game.convertToRaid = convert
+    lock.game:convertToRaid(); w:advance(0.2)
+    assert.is_true(lock.game:isRaid())
+    assert.are.equal("requested", lock.engine.rides[key].state)
+  end)
+
+  it("convertAndAccept in a raid already accepts at once", function()
+    local s = crewUp()
+    lock.game:convertToRaid(); w:advance(0.2)
+    assert.is_table(t.engine:requestRide(s.standId, 0)); w:advance(2)
+    assert.is_string(lock.engine:convertAndAccept("Tra Veler#"..s.standId))
+    assert.are.equal("accepted", lock.engine.rides["Tra Veler#"..s.standId].state)
+  end)
+
   it("stranger summon shows no-ride yellow", function()                           -- Review Focus 3
     w:offerSummon("Dar Kbolt", "Tra Veler"); w:advance(1)
     local v = t.events[#t.events]; assert.are.equal("YELLOW", v[2].level); assert.are.equal("noride", v[2].checks[1].id)

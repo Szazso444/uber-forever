@@ -88,6 +88,7 @@ local function fakeWoW()
   env.date = function() return "12:00:00" end
   env.SlashCmdList = {}
   env.ERR_TRADE_COMPLETE = "Trade complete."
+  env.UNKNOWNOBJECT = "Unknown"
   env.CreateFrame = function()
     local frame = { events = {} }
     function frame:RegisterEvent(event) self.events[event] = true end
@@ -162,7 +163,13 @@ local function fakeWoW()
   env.C_Item = { GetItemCount = function(id) return w.items[id] or 0 end }
   env.JoinChannelByName = function(name)
     w.joinCalls[#w.joinCalls + 1] = name
-    if not w.channelsFull then w.channels[name] = 5 end
+    if w.channelsFull then
+      return
+    elseif w.joinDelay then -- the server confirms the join later
+      env.C_Timer.After(w.joinDelay, function() w.channels[name] = 5 end)
+    else
+      w.channels[name] = 5
+    end
   end
   env.GetChannelName = function(name) return w.channels[name] or 0, name end
   env.C_GameRules = { IsHardcoreActive = function() return w.hardcore end }
@@ -173,7 +180,7 @@ local function fakeWoW()
       return w.sendResult
     end,
     InChatMessagingLockdown = function() return w.lockdown end,
-    RegisterAddonMessagePrefix = function(prefix) w.prefixes[prefix] = true; return 0 end,
+    RegisterAddonMessagePrefix = function(prefix) w.prefixes[prefix] = true; return w.prefixResult or 0 end,
   }
   env.C_AddOns = { GetAddOnMetadata = function(_, key) return w.metadata[key] end }
   return w, env
@@ -234,6 +241,12 @@ describe("WoW game adapter", function()
       assert.are.equal("party2", game:unitFor("Cy Dee-Forever"))
     end)
 
+    it("treats the game's placeholder name as unknown (R55)", function()
+      w.units.party1 = { name = "Unknown" } -- UNKNOWNOBJECT: the name hasn't loaded yet
+      assert.is_nil(game:unitFor("Unknown"))
+      assert.are.same({ "Ana Smith" }, game:groupNames())
+    end)
+
     it("treats a secret name as unknown", function()
       w.units.party1 = { name = "Hid Den" }
       w.secrets["Hid Den"] = true
@@ -266,6 +279,18 @@ describe("WoW game adapter", function()
     it("gives nil, never 0 or an empty text, for what the game can't say (R21)", function()
       w.zone, w.subzone, w.inInstance = "", "", true
       assert.are.same({ inInstance = true }, game:location())
+    end)
+
+    it("treats secret numbers as unknown (R55)", function()
+      local p = w.units.player
+      p.mapID, p.wx, p.wy = 1455, -4800.5, 120.25
+      w.secrets[-4800.5] = true
+      local loc = game:location()
+      assert.is_nil(loc.wx)
+      assert.are.equal(120.25, loc.wy)
+      w.units.player.level = 31
+      w.secrets[31] = true
+      assert.is_nil(game:level())
     end)
 
     it("names a map, and gives nil for a map it doesn't know", function()
@@ -350,17 +375,21 @@ describe("WoW game adapter", function()
       assert.are.same({ "party1" }, w.initiated)
     end)
 
-    it("puts money in a trade only while the window is open", function()
+    it("tries money in an open trade window, but never claims it worked (R55)", function()
       listen()
       assert.is_false(game:trySetTradeMoney(5000))
+      assert.is_nil(w.tradeMoneySet) -- no window: not even tried
       w.fire("TRADE_SHOW")
-      assert.is_true(game:trySetTradeMoney(5000))
+      -- Forever's API has no getter to read the amount back, so the UI always
+      -- shows "Put X in the trade".
+      assert.is_false(game:trySetTradeMoney(5000))
       assert.are.equal(5000, w.tradeMoneySet)
       w.tradeRaises = true
       assert.is_false(game:trySetTradeMoney(6000))
       w.fire("TRADE_CLOSED")
       w.tradeRaises = false
       assert.is_false(game:trySetTradeMoney(7000))
+      assert.are.equal(5000, w.tradeMoneySet)
     end)
 
     it("reads money", function()
@@ -399,6 +428,17 @@ describe("WoW game adapter", function()
       w.channelsFull = true
       assert.are.same({ nil, "full" }, { game:joinChannel("Other") })
     end)
+  end)
+
+  it("keeps polling when reading the guild roster fails at listen (R55)", function()
+    w.guild = { "Bo Lee" }
+    env.GetNumGuildMembers = function() error("roster not ready") end
+    assert.has_no.errors(function() listen() end)
+    assert.are.equal(1, #logged)
+    assert.truthy(logged[1]:find("roster not ready", 1, true))
+    w.units.player.mapID = 1455
+    w.advance(1)
+    assert.are.same({ { "MOVED" } }, events)
   end)
 
   describe("game events", function()
@@ -533,6 +573,17 @@ describe("WoW game adapter", function()
       w.fire("TRADE_CLOSED")
       w.now = w.now + 10
       w.money = 20000
+      w.fire("PLAYER_MONEY")
+      assert.are.same({}, events)
+    end)
+
+    it("skips a trade whose starting money the game doesn't give (R55)", function()
+      w.units.NPC = { name = "Dar Kbolt" }
+      w.money = nil
+      w.fire("TRADE_SHOW")
+      w.money = 5000
+      w.fire("UI_INFO_MESSAGE", 1, "Trade complete.")
+      w.fire("TRADE_CLOSED")
       w.fire("PLAYER_MONEY")
       assert.are.same({}, events)
     end)
@@ -685,9 +736,31 @@ describe("Init", function()
     w.fire("ADDON_LOADED", "Taxi", false)
     w.fire("PLAYER_LOGIN")
     w.fire("PLAYER_ENTERING_WORLD", true, false)
-    w.advance(10)
+    w.advance(5 + 9.9) -- the join, then up to 10 s of waiting for its channel id (R54)
+    assert.are.same({}, statuses())
+    w.advance(0.2)
     assert.is_true(ns.engine.disabled)
     assert.are.same({ "Taxi: " .. ns.L.STATUS_CHANNEL_FULL }, statuses())
+  end)
+
+  it("starts enabled when the channel id shows up a few seconds after the join (R54)", function()
+    ns = Taxi.load()
+    w, env = fakeWoW()
+    w.joinDelay = 2.8
+    run("Taxi/Game/WoW.lua", env, ns)
+    run("Taxi/Core/Init.lua", env, ns)
+    w.fire("ADDON_LOADED", "Taxi", false)
+    w.fire("PLAYER_LOGIN")
+    w.fire("PLAYER_ENTERING_WORLD", true, false)
+    ns.engine:send("QUERY", { target = "Dar Kbolt" }, "CHANNEL") -- queued until the engine starts
+    w.advance(5 + 2.9)
+    assert.are.same({}, w.sent)
+    w.advance(0.6) -- the 0.5 s poll sees the id; the engine starts and pumps
+    assert.is_false(ns.engine.disabled)
+    assert.are.equal(1, #w.sent)
+    assert.are.same({ "TaxiForever" }, w.joinCalls)
+    w.advance(20)
+    assert.are.same({}, statuses())
   end)
 
   it("feeds our addon messages and the game's events to the engine", function()
@@ -758,6 +831,64 @@ describe("Init", function()
     assert.falsy(text:find("boom 3\n", 1, true))
     assert.truthy(text:find("boom 4", 1, true))
     assert.truthy(text:find("boom 53", 1, true))
+  end)
+
+  describe("failures (R55)", function()
+    local function fresh()
+      ns = Taxi.load()
+      w, env = fakeWoW()
+      run("Taxi/Game/WoW.lua", env, ns)
+      run("Taxi/Core/Init.lua", env, ns)
+    end
+
+    local function debugText()
+      w.prints = {}
+      env.SlashCmdList.TAXI("debug")
+      return table.concat(w.prints, "\n")
+    end
+
+    it("logs an addon message prefix the game refused", function()
+      fresh()
+      w.prefixResult = 3 -- RegisterAddonMessagePrefixResult.MaxPrefixes
+      w.fire("ADDON_LOADED", "Taxi", false)
+      assert.are.same({}, w.prints)
+      assert.truthy(debugText():find("RegisterAddonMessagePrefix TaxiFvr: 3", 1, true))
+    end)
+
+    it("logs a failing ADDON_LOADED instead of raising it", function()
+      fresh()
+      env.C_ChatInfo.RegisterAddonMessagePrefix = function() error("prefix boom") end
+      assert.has_no.errors(function() w.fire("ADDON_LOADED", "Taxi", false) end)
+      assert.truthy(debugText():find("prefix boom", 1, true))
+    end)
+
+    it("logs a failing PLAYER_ENTERING_WORLD instead of raising it", function()
+      fresh()
+      w.fire("ADDON_LOADED", "Taxi", false)
+      w.fire("PLAYER_LOGIN")
+      env.C_Timer = { After = function() error("timer boom") end }
+      assert.has_no.errors(function() w.fire("PLAYER_ENTERING_WORLD", true, false) end)
+      assert.truthy(debugText():find("timer boom", 1, true))
+    end)
+
+    it("logs a failing PLAYER_LOGOUT instead of raising it", function()
+      boot(nil)
+      ns.Store.prune = function() error("prune boom") end
+      assert.has_no.errors(function() w.fire("PLAYER_LOGOUT") end)
+      assert.truthy(debugText():find("prune boom", 1, true))
+    end)
+
+    it("fails the login when the game doesn't give my name", function()
+      fresh()
+      w.units.player.name = "Unknown"
+      w.fire("ADDON_LOADED", "Taxi", false)
+      w.fire("PLAYER_LOGIN")
+      assert.is_nil(ns.engine)
+      assert.are.same({ "Taxi: " .. ns.L.START_FAILED }, w.prints)
+      w.fire("PLAYER_ENTERING_WORLD", true, false)
+      w.advance(20)
+      assert.are.same({ "Taxi: " .. ns.L.START_FAILED }, w.prints)
+    end)
   end)
 
   it("escapes | in logged text it prints", function()

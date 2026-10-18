@@ -221,13 +221,22 @@ function Game:invite(name)
   end
 end
 
+-- As in the game, the conversion is not there yet when this returns: the group
+-- becomes a raid on the next step of the clock, and then every member hears
+-- GROUP_CHANGED (R53).
 function Game:convertToRaid()
   local group = self.p.group
   if group == nil or group.raid then
     return
   end
-  group.raid = true
-  self.world:groupChanged(group.members, true)
+  local world = self.world
+  world.clock:after(0, function()
+    if group.raid or #group.members == 0 then
+      return
+    end
+    group.raid = true
+    world:groupChanged(group.members, false)
+  end)
 end
 
 function Game:leaveGroup()
