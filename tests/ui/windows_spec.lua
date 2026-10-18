@@ -32,7 +32,7 @@ describe("windows", function()
 
   -- A world with a warlock, a traveler and two possible clickers; the window is
   -- `viewer`'s (a key of the table below), started like Core/Init starts it.
-  local function boot(viewer)
+  local function boot(viewer, beforeStart)
     ns = Taxi.load()
     w = ns.World.new{ seed = 5, start = 50000 }
     lock = w:addPlayer{ name = "Dar Kbolt", class = "WARLOCK", level = 45, place = "gadgetzan", guild = "Crew" }
@@ -46,6 +46,9 @@ describe("windows", function()
     local p = ({ lock = lock, me = me, c1 = c1, c2 = c2, mage = mage })[viewer]
     ns.engine, ns.db = p.engine, p.db
     Main = ns.UI.Main
+    if beforeStart then
+      beforeStart()
+    end
     Main:Start()
   end
 
@@ -234,6 +237,48 @@ describe("windows", function()
     end)
   end)
 
+  describe("a window that fails to build", function()
+    local logged
+
+    before_each(function()
+      boot("lock", function()
+        ns.UI.History.new = function() error("boom") end -- the last tab's constructor
+      end)
+      logged, w.errors = w.errors, {} -- what the Engine's log sink was given
+    end)
+
+    it("leaves nothing visible, logs the failure, and is not built or registered twice", function()
+      local frame = assert(ui.env.TaxiMainFrame)
+      for _, f in ipairs(ui.frames) do
+        local up = f
+        while up and up ~= frame do up = up.parent end
+        if up == frame then
+          assert.is_false(ui:visible(f))
+        end
+      end
+      assert.is_false(Main:IsShown())
+      assert.are.same({}, ui.env.UISpecialFrames)
+      assert.are.equal(1, #logged)
+      assert.truthy(logged[1]:find("window build", 1, true))
+      assert.truthy(logged[1]:find("boom", 1, true))
+      local made = #ui.frames
+      Main:Toggle()
+      Main:Toggle()
+      assert.are.equal(made, #ui.frames)
+      assert.are.equal(frame, ui.env.TaxiMainFrame)
+      assert.are.same({}, ui.env.UISpecialFrames)
+      assert.are.same({ "Taxi: Taxi's window could not be built. /taxi debug shows why.",
+        "Taxi: Taxi's window could not be built. /taxi debug shows why." }, ui.prints)
+      assert.is_false(Main:IsShown())
+    end)
+
+    it("still runs the rest of Taxi: the minimap button, the journal and the notices", function()
+      assert.is_not_nil(ui.env.TaxiMinimapButton)
+      lock.engine:status("STATUS_LEAVE_GROUP")
+      assert.are.equal(ns.L.STATUS_LEAVE_GROUP, Main:statusText())
+    end)
+  end)
+
   describe("the Travel tab", function()
     before_each(function() boot("me") end)
 
@@ -294,6 +339,38 @@ describe("windows", function()
       Main:ShowTab("clicking")
       assert.is_true(ui:shows("Evil||cff00ff00Name"))
       noRawPipes(ui)
+    end)
+
+    it("never lets a control character from the wire make a second line", function()
+      local now = w.clock:now()
+      local function stand(id, kind, extra)
+        local fields = {
+          standId = id, kind = kind, faction = "Alliance", mapID = 1446, wx = 0, wy = 0,
+          zone = "Tanaris\n★ 5.0 · 999 summons\nX", subzone = "Sub\r\tz\127", seatsFree = 2, clickers = 0,
+          clickerPct = 25, note = "n1\nn2\1n3",
+        }
+        for k, v in pairs(extra or {}) do fields[k] = v end
+        return ns.Stand.fromFields(fields, id:match("^(.-)@"), now)
+      end
+      ns.Board.upsert(me.engine.board, stand("Evil One@1", "lock"), now)
+      ns.Board.upsert(me.engine.board, stand("Evil Two@1", "mage", { portals = { "stormwind\n⚠ fake", "ironforge" } }), now)
+      local function noControls()
+        for _, text in ipairs(ui:texts()) do
+          assert.is_nil(text:find("%c"), text)
+        end
+      end
+      Main:Show()
+      local list = Main.views.travel.list
+      assert.are.equal("New · no ratings yet", list.rows[1].sub2:GetText()) -- the real trust line, nothing forged
+      assert.are.equal("Tanaris ★ 5.0 · 999 summons X - Sub  z ", list.rows[1].sub:GetText())
+      ui:click(list.rows[1])
+      assert.is_true(ui:shows("Note: n1 n2 n3"))
+      noControls()
+      ui:press("Portals")
+      assert.truthy(list.rows[1].sub2:GetText():find("stormwind ⚠ fake, Ironforge", 1, true))
+      noControls()
+      Main:ShowTab("clicking")
+      noControls()
     end)
 
     it("picking a row shows its details and asks the channel about the warlock once", function()
@@ -413,17 +490,60 @@ describe("windows", function()
   describe("the footer", function()
     before_each(function() boot("me") end)
 
+    local REMINDER = "New ratings are saved on /reload or logout."
+
     it("reminds to save new ratings, but not in combat (spec 8.4)", function()
       Main:Show()
-      assert.are.equal("", Main:statusText())
+      assert.are.equal("", Main:reminderText())
       me.engine.dirty = true
-      assert.are.equal("New ratings are saved on /reload or logout.", Main:statusText())
+      assert.are.equal(REMINDER, Main:reminderText())
       ui.combat = true
-      assert.are.equal("", Main:statusText())
+      assert.are.equal("", Main:reminderText())
       ui.combat = false
       Main:Invalidate()
       ui:update(0.02)
-      assert.is_true(ui:shows("New ratings are saved on /reload or logout."))
+      assert.is_true(ui:shows(REMINDER))
+    end)
+
+    it("shows the reminder beside a newer-version status, for as long as that stays", function()
+      Main:Show()
+      me.engine:onVersion() -- one newer peer: updateShown stays set for the session
+      me.engine.dirty = true
+      Main:Invalidate()
+      ui:update(0.02)
+      assert.is_true(ui:shows(ns.L.STATUS_UPDATE))
+      assert.is_true(ui:shows(REMINDER))
+    end)
+
+    it("shows the reminder beside what is wrong with Taxi", function()
+      Main:Show()
+      me.engine.disabled = true
+      me.engine.dirty = true
+      Main:Invalidate()
+      ui:update(0.02)
+      assert.is_true(ui:shows(ns.L.STATUS_CHANNEL_FULL))
+      assert.is_true(ui:shows(REMINDER))
+    end)
+
+    it("shows the reminder beside an action's answer", function()
+      Main:Show()
+      me.engine:status("STATUS_LEAVE_GROUP")
+      me.engine.dirty = true
+      Main:Invalidate()
+      ui:update(0.02)
+      assert.is_true(ui:shows(ns.L.STATUS_LEAVE_GROUP))
+      assert.is_true(ui:shows(REMINDER))
+    end)
+
+    it("hides the reminder in combat, and nothing else with it", function()
+      Main:Show()
+      me.engine:onVersion()
+      me.engine.dirty = true
+      ui.combat = true
+      Main:Invalidate()
+      ui:update(0.02)
+      assert.is_true(ui:shows(ns.L.STATUS_UPDATE))
+      assert.is_false(ui:shows(REMINDER))
     end)
 
     it("shows what is wrong with Taxi while it is, and not after", function()

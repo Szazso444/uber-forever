@@ -9,8 +9,10 @@ local _, ns = ...
 -- menu made here is a plain frame.
 --
 -- Text that came off the wire (names, zones, notes) can hold "|", which the
--- game reads as the start of a colour or link code. Everything a list row or
--- setText shows goes through W.escape, so no window can forget it (R14).
+-- game reads as the start of a colour or link code, and control characters
+-- (a newline would add a line to a row and could forge one, say a trust line).
+-- Everything a list row or setText shows goes through W.escape, so no window
+-- can forget it (R14, R57).
 local L, Money = ns.L, ns.Money
 
 local UI = ns.UI or {}
@@ -30,9 +32,10 @@ W.COLOR = {
 
 -- Text -----------------------------------------------------------------------------
 
--- Text safe to show: "|" becomes "||".
+-- Text safe to show: every control character becomes a space and "|" becomes "||".
 function W.escape(text)
-  return (tostring(text == nil and "" or text):gsub("|", "||"))
+  local plain = tostring(text == nil and "" or text):gsub("%c", " ")
+  return (plain:gsub("|", "||"))
 end
 
 -- Sets the text of a font string or button; the text is escaped.

@@ -19,6 +19,11 @@ describe("Widgets", function()
       assert.are.equal("12", W.escape(12))
     end)
 
+    it("turns every control character into a space, so text from the wire is one line", function()
+      assert.are.equal("a b  c d e||f", W.escape("a\nb\r\tc\0d\127e|f"))
+      assert.are.equal("Tanaris ★ 5.0", W.escape("Tanaris\n★ 5.0")) -- other bytes, UTF-8 included, stay
+    end)
+
     it("setText escapes for font strings and buttons alike", function()
       local fs = parent:CreateFontString()
       W.setText(fs, "Evil|Name")

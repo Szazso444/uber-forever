@@ -46,9 +46,10 @@ local function tooltip(button)
   GameTooltip:SetOwner(button, "ANCHOR_LEFT")
   GameTooltip:SetText(L.UI_TITLE)
   GameTooltip:AddLine(L.MINIMAP_TIP, 1, 1, 1)
-  local status = UI.Main:statusText()
-  if status ~= "" then
-    GameTooltip:AddLine(W.escape(status), 1, 0.82, 0)
+  for _, line in ipairs({ UI.Main:statusText(), UI.Main:reminderText() }) do
+    if line ~= "" then
+      GameTooltip:AddLine(W.escape(line), 1, 0.82, 0)
+    end
   end
   GameTooltip:Show()
 end

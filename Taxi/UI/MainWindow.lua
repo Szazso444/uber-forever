@@ -9,8 +9,9 @@ local _, ns = ...
 -- protected frame hangs from as protected too (the window, the open tab and the
 -- stand header). In combat lockdown they can't be shown, hidden, moved or
 -- switched from here, so in combat the window neither opens, closes, moves nor
--- changes tab (Esc still closes it, that being the game's own code); text and
--- rows go on updating, and what was asked for happens when combat ends.
+-- changes tab (Esc is expected to still close it, that being the game's own
+-- code; to verify in game); text and rows go on updating, and what was asked
+-- for happens when combat ends.
 --
 -- Events and clicks only mark the window dirty; its OnUpdate repaints the open
 -- tab once per frame at most, and anyway every REFRESH_SECONDS, since
@@ -25,8 +26,8 @@ local W = UI.Widgets
 local Main = {}
 UI.Main = Main
 
-local WIDTH, HEIGHT = 600, 500
-local CONTENT_W, CONTENT_H = 576, 398 -- below the tabs and the banner, above the footer
+local WIDTH, HEIGHT = 600, 514
+local CONTENT_W, CONTENT_H = 576, 398 -- below the tabs and the banner, above the two footer lines
 local REFRESH_SECONDS = 5
 local NOTICE_SECONDS = 10 -- how long an action's answer stays in the footer
 
@@ -161,8 +162,8 @@ function Main:report(ok, why, done)
   return ok
 end
 
--- The footer's line: an action's answer, then what is wrong with Taxi itself
--- (read live, so it clears when it is fixed), then the reminder to save (spec §8.4).
+-- The footer's first line: an action's answer, else what is wrong with Taxi
+-- itself (read live, so it clears when it is fixed), else nothing.
 function Main:statusText()
   local engine = ns.engine
   if engine == nil then
@@ -179,7 +180,16 @@ function Main:statusText()
     return L.STATUS_LOCKDOWN
   elseif engine.updateShown then
     return L.STATUS_UPDATE
-  elseif engine.dirty and not UnitAffectingCombat("player") then
+  end
+  return ""
+end
+
+-- The footer's second line (spec 8.4): new ratings are only on disk after a
+-- /reload or logout, and the player is told whenever that is so, whatever the
+-- first line says, except in combat.
+function Main.reminderText()
+  local engine = ns.engine
+  if engine ~= nil and engine.dirty and not UnitAffectingCombat("player") then
     return L.FOOTER_DIRTY
   end
   return ""
@@ -220,7 +230,10 @@ function Main:Show(key)
     print(L.CHAT_PREFIX .. L.UI_AFTER_COMBAT)
     return
   end
-  self:Create()
+  if self:Create() == nil then
+    print(L.CHAT_PREFIX .. L.UI_BUILD_FAILED)
+    return
+  end
   self:ShowTab(key or self.active)
   self.frame:Show() -- its OnShow paints
 end
@@ -257,6 +270,7 @@ function Main:paint()
   W.setText(self.banner, Main.dead() and L.STATUS_HC_DEAD or "")
   self.views[self.active]:Refresh()
   W.setText(self.footer, self:statusText())
+  W.setText(self.reminder, self:reminderText())
 end
 
 -- Repaints the open tab, the banner and the footer, if the window is open.
@@ -270,17 +284,11 @@ end
 
 -- Building the window --------------------------------------------------------------------------------
 
--- Builds the window once and returns it; nil during combat lockdown, when its
--- protected button can't be set up. A build that fails halfway leaves
--- nothing behind but the error, so the next call builds it again.
-function Main:Create()
-  if self.frame then
-    return self.frame
-  end
-  if InCombatLockdown() then
-    return nil
-  end
-  local f = CreateFrame("Frame", "TaxiMainFrame", UIParent, "BasicFrameTemplateWithInset")
+-- Fills the new frame `f`: its scripts and the four tabs, banner and footer. It
+-- only publishes the window (self.frame, self.views ...) and registers it for
+-- Esc when everything has been built, so a failure partway leaves no half
+-- window behind in the module.
+local function build(self, f)
   f:SetSize(WIDTH, HEIGHT)
   f:SetPoint("CENTER", UIParent, "CENTER", 0, 20)
   f:SetToplevel(true)
@@ -302,9 +310,6 @@ function Main:Create()
   end)
   if f.TitleText then
     f.TitleText:SetText(L.UI_TITLE)
-  end
-  if UISpecialFrames then
-    table.insert(UISpecialFrames, "TaxiMainFrame") -- Esc closes it
   end
 
   local tabButtons, views = {}, {}
@@ -329,9 +334,13 @@ function Main:Create()
   banner:SetWidth(CONTENT_W - 8)
   W.paint(banner, W.COLOR.red)
 
+  -- Two footer lines: what Taxi says (above), and the reminder to save (below).
   local footer = W.text(f, "GameFontNormalSmall")
-  footer:SetPoint("BOTTOMLEFT", f, "BOTTOMLEFT", 16, 12)
+  footer:SetPoint("BOTTOMLEFT", f, "BOTTOMLEFT", 16, 27)
   footer:SetWidth(CONTENT_W - 8)
+  local reminder = W.text(f, "GameFontNormalSmall")
+  reminder:SetPoint("BOTTOMLEFT", f, "BOTTOMLEFT", 16, 12)
+  reminder:SetWidth(CONTENT_W - 8)
 
   f:SetScript("OnShow", function()
     self:Refresh()
@@ -346,8 +355,35 @@ function Main:Create()
     end
   end)
 
-  f:Hide()
-  self.tabButtons, self.views, self.banner, self.footer = tabButtons, views, banner, footer
+  self.tabButtons, self.views, self.banner, self.footer, self.reminder = tabButtons, views, banner, footer, reminder
   self.frame = f
+  if UISpecialFrames then
+    table.insert(UISpecialFrames, "TaxiMainFrame") -- Esc closes it (expected; checked in game)
+  end
+end
+
+-- Builds the window once and returns it. Nil during combat lockdown, when its
+-- protected button can't be set up (it is built when combat ends), and nil for
+-- good if the build failed: the frame is hidden at once, so a failure leaves
+-- nothing on screen, the error goes to the Engine's log (/taxi debug), and the
+-- window is not built a second time (R58).
+function Main:Create()
+  if self.frame then
+    return self.frame
+  end
+  if self.failed or InCombatLockdown() then
+    return nil
+  end
+  local f = CreateFrame("Frame", "TaxiMainFrame", UIParent, "BasicFrameTemplateWithInset")
+  f:Hide()
+  local built, err = pcall(build, self, f)
+  if not built then
+    self.failed = true
+    f:Hide()
+    if ns.engine then
+      pcall(ns.engine.log, "window build: " .. tostring(err))
+    end
+    return nil
+  end
   return f
 end
