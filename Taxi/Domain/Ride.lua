@@ -34,8 +34,9 @@ local EVENTS = {
   CANCEL = { to = "cancelled" },
 }
 
--- The id both sides can agree on without talking: who drives, who travels, and
--- when the ride was requested, in whole seconds (the clock may be fractional).
+-- A ride's id. The driver mints it when it accepts the request and sends it to
+-- the traveler in ACCEPT: who drives, who travels, and when it was accepted, in
+-- whole seconds (the clock may be fractional).
 function M.makeId(driver, traveler, now)
   return driver .. "@" .. traveler .. "@" .. math.floor(now)
 end

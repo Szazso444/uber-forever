@@ -97,9 +97,12 @@ next to the real popup; the sim's panels say "(sim)".)
 - [ ] Stars (Trust), Open trade with Dar Kbolt: "Put 1g in the trade" shows
       (as a hint and as a Put button, enabled while the simulated trade is
       open; clicking it keeps the hint), "Rating sent." too; opening the trade
-      again sends no second rating.
-- [ ] Trade tip completes the trade; History shows "Summon from Dar Kbolt".
-- [ ] Stay and click applies to his stand; Leave group leaves it.
+      again sends no second rating. Picking No tip clears the hint.
+- [ ] Put 1g in the trade (the button: Open trade itself never sets the
+      money), then Trade tip completes the trade; History shows "Summon from
+      Dar Kbolt".
+- [ ] Stay and click applies to his stand (his crew is full, so he turns it
+      down: "Dar Kbolt turned your application down."); Leave group leaves it.
 
 ### A portal ride
 - [ ] Portals > Request > Darnassus: "Mag Ic (sim)" toast; Accept; Accept invite;
@@ -148,8 +151,8 @@ next to the real popup; the sim's panels say "(sim)".)
       stars of the arrival and shift-end windows; ⚠ in "⚠ 1 reported death" on a
       stand row and in the arrival window's "⚠ You landed away from the agreed
       spot."; → in the yellow guard line "Not a Taxi ride: X → area"; · in the
-      trust line, the stand header, the footer and the first two `/taxi debug`
-      lines; ✓ ✗ at the start of each Summon Guard line (and ✓ after "Received"
+      trust line, the stand header, the Clicking rows and the first two
+      `/taxi debug` lines; ✓ ✗ at the start of each Summon Guard line (and ✓ after "Received"
       in the shift-end window); … in "… more checks failed" (only with more
       than nine checks, so rarely). The swap points: ★ ✓ ✗ are `W.STAR`,
       `W.CHECK` and `W.CROSS` (one line each, `Taxi/UI/Widgets.lua`); the rest
@@ -351,8 +354,10 @@ separator survives.
 - [ ] **D4. Your own place.** Do: `/run local m=C_Map.GetBestMapForUnit("player");local p=C_Map.GetPlayerMapPosition(m,"player");print(m,C_Map.GetMapInfo(m).name,p:GetXY())`
       and `/run print(GetZoneText(),"|",GetSubZoneText())` Expect: a map id, its
       name and x, y between 0 and 1; the zone and subzone texts. A stand opened
-      here shows "Zone - Subzone" with the same words (E1). In a capital the
-      subzone may be empty.
+      here shows "Zone - Subzone" on another client (E1): the zone is that
+      client's own name for this map id (the map name printed above, in its
+      language), never this zone text; the subzone is this client's text. In a
+      capital the subzone may be empty.
 - [ ] **D5. Group counts.** Do: `/run print(IsInRaid(),GetNumGroupMembers(),GetNumSubgroupMembers())`
       alone, in a party of 3, and in a raid of 6. Expect: `false 0 0`, `false 3 2`
       (the member count includes you, the subgroup count does not), then `true 6`
@@ -381,8 +386,9 @@ separator survives.
       minutes and 5 seconds.
 - [ ] **E4. The stand closes when its owner walks away.** Do: W walks more than 50
       yards from where the stand was opened. Expect: within a few seconds W's My
-      stand tab goes back to the form and T's row goes. (No notice is shown for
-      this; "Your stand is closed." appears only after pressing Close stand.)
+      stand tab goes back to the form, W's footer (or chat, with the window
+      closed) says "Your stand closed because you moved away from it.", and T's
+      row goes. ("Your stand is closed." is the answer to pressing Close stand.)
 - [ ] **E5. The Travel tab controls.** Do: open the zone dropdown, pick a zone,
       pick "All zones", click elsewhere while it is open, toggle Portals and
       Summons. Expect: the list opens under its button, filters, resets, closes
@@ -472,7 +478,9 @@ questions 2 and 3 (steps G6 and G8). Do it on a normal ruleset first.
 - [ ] **G4. T joins.** Do: T accepts the party invite by hand; W and T watch
       their tabs. Expect: W's My stand first says "Invited - waiting for them
       to join", then "In your group"; T's row says "In group - awaiting
-      summon".
+      summon". Also, once: T declines the first invite; W's row still says
+      "Invited - waiting for them to join" and has a Re-invite button, which
+      sends a new invite and says "Invited T again." in W's footer.
 - [ ] **G5. The secure Summon button** (W). Do: W looks at the button before T
       has joined (G4) and after, then clicks it once. Expect: the button reads
       "Summon T" and is enabled once T has joined; before that it is greyed and
@@ -480,8 +488,9 @@ questions 2 and 3 (steps G6 and G8). Do it on a normal ruleset first.
       starts on T, whoever W has targeted. This must work with "Cast action
       keybinds on key down" both on and off (Options > Controls). C1 and C2 get
       the banner "Portal is up - click it!" with a sound, exactly once per
-      click. If the cast fails or hits the wrong target, look at the secure
-      button in `Taxi/UI/MyStand.lua`.
+      click; W's row for T says "Being summoned" (only a ride W summoned this
+      way is logged when T arrives, R52). If the cast fails or hits the wrong
+      target, look at the secure button in `Taxi/UI/MyStand.lua`.
 - [ ] **G6. Where T lands (spec §16.2).** Do: C1 and C2 click the portal; T
       accepts by hand. Test twice: (a) W stays put; (b) W walks about 45 yards
       from the portal first (the stand stays open below 50 yards, and the guard
@@ -507,14 +516,21 @@ questions 2 and 3 (steps G6 and G8). Do it on a normal ruleset first.
       The panel appearing at all is the proof that `CONFIRM_SUMMON` fires for a
       warlock's Ritual of Summoning in Forever. With `/taxi sim` running at the
       same time, the real panel must still show (title without "(sim)") beside
-      the real popup, and the sim's panel stays at the top centre.
+      the real popup, and the sim's panel stays at the top centre. While the
+      popup is up the panel keeps checking: when a clicker starts a fight
+      (attack a target dummy) it turns RED at once ("✗ In combat: C1"), and
+      back when the fight ends.
 - [ ] **G8. What `GetSummonConfirmAreaName()` returns (spec §16.3).** Do: with
       the popup up, `/run print(C_SummonInfo.GetSummonConfirmAreaName(),"|",GetZoneText(),"|",GetSubZoneText())`
       (run it for the destination: ask W to read their zone and subzone aloud
       too). Expect and record: the popup's area is the zone or the subzone of
-      W's position. The guard accepts either, so "Destination: ..." must show a
-      tick; a ✗ on an honest ride means the text is something else (a map
-      name, a continent), and `Game.summonFacts` needs adjusting.
+      W's position, and T's `/run print(C_Map.GetMapInfo(<W's map id>).name)`
+      (the map id from D4 on W) gives the same zone name. The guard compares the
+      area with T's own name for the stand's map (the stand's zone text from
+      W's addon only when T's client has no name for that map) or the
+      subzone, so "Destination: ..." must show a tick; a ✗ on an honest ride
+      means the text is something else (a continent, a sub-map's name), and
+      `Game.summonFacts` or the map lookup needs adjusting.
 - [ ] **G9. A real YELLOW and RED.** Needs: a second warlock (the clicker can be
       one). Do: (a) with T in no ride, the other warlock summons T: YELLOW
       "Not a Taxi ride: X → area". (b) While T is in W's ride (G4), the other
@@ -541,7 +557,9 @@ questions 2 and 3 (steps G6 and G8). Do it on a normal ruleset first.
       the popup goes (up to about 30 seconds, the time Taxi waits for a landing)
       T's row goes back to "In group - awaiting summon" once; a second failed
       summon ends the ride ("Your request to W ended without a ride."). No
-      rating window either time.
+      rating window either time. Also: with the popup up, T uses the
+      hearthstone (or takes a flight path); no arrival window opens, then or
+      when the popup goes.
 - [ ] **G14. Portal-up alerts travel as group addon messages.** Do: C1 pastes
       the addon-messages helper (Setup) before G5, then W clicks Summon; repeat
       in the raid of H3. Expect: C1's helper prints a line with `PARTY` (and
@@ -559,16 +577,17 @@ questions 2 and 3 (steps G6 and G8). Do it on a normal ruleset first.
       `/run print(IsInRaid())` says `true` for everyone; then T3 is invited
       and accepts; no "action blocked" popup. Record whether the game asks for a
       confirmation. If `ConvertToRaid` is blocked from the click, the flow
-      ends with "Couldn't convert the group to a raid." after 5 seconds and
-      the request stays pending (the spec's hint to convert through Blizzard's
-      own menu is not shown by Taxi): convert by hand, then Accept should work.
+      ends with "Couldn't convert the group to a raid. Convert it from the
+      group menu, then press Accept again." after 5 seconds and the request
+      stays pending: convert by hand, then Accept should work.
 - [ ] **H3. Rides work in a raid.** Do: with 6 in the raid run G5 to G12 for T1.
       Expect: the Summon button targets the right traveler among raid units;
       the portal-up banner reaches C1 and C2; the guard panel reads GREEN;
       `C_Map.GetBestMapForUnit` for raid units works (D2).
 - [ ] **H4. A group leader who is not W.** Do: make a clicker the leader and press
-      Convert as W. Expect: "Couldn't convert the group to a raid." after 5
-      seconds, and the request is back as pending.
+      Convert as W. Expect: "Couldn't convert the group to a raid. Convert it
+      from the group menu, then press Accept again." after 5 seconds, and the
+      request is back as pending.
 
 ### I. Trade, tips and payouts (needs a completed ride; Forever's Hardcore trade rules are in I8)
 
@@ -579,8 +598,9 @@ questions 2 and 3 (steps G6 and G8). Do it on a normal ruleset first.
       hint "Put 1g in the trade" and, under it, a button "Put 1g in the trade"
       that is greyed out until the trade window with W is open and enabled
       once it is (it may take up to half a second to switch). No "action
-      blocked" popup. Taxi never sets the money by itself: it is only tried by
-      the click in I2. T must not press Leave group first: Taxi only opens a
+      blocked" popup. Open trade only opens the trade and never touches the
+      gold field (the trade window that opens may be another player's): only
+      the Put button's click (I2) sets the money. T must not press Leave group first: Taxi only opens a
       trade with a group member (otherwise "The game would not open a
       trade.").
 - [ ] **I2. `SetTradeMoney` from the Put button click (spec §16.4).** Needs:

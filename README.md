@@ -31,9 +31,10 @@ agreed to before they accept it.
 - **Summon Guard.** When a summon popup appears, a panel beside it compares it
   with your ride: the summoner, the landing area, whether the warlock is at the
   stand, whether anyone is in combat, the zone's level, whether the stand
-  moved, and the warlock's rating. It shows GREEN, YELLOW or RED, and on RED
-  offers "Decline summon". The addon never accepts a summon, trade, invite or
-  portal for you.
+  moved, and the warlock's rating. It shows GREEN, YELLOW or RED, checks
+  again while the popup is up (a fight that starts, a warlock who walks off),
+  and on RED offers "Decline summon". The addon never accepts a summon, trade,
+  invite or portal for you.
 - **Trust and Share ratings.** Each warlock has a **Trust** rating (from
   travelers, about safety) and a **Share** rating (from clickers, about fair
   payouts), 1 to 5 stars: "★ 4.8 · 137 summons". Fewer than five ratings shows
@@ -74,7 +75,8 @@ The Summon Guard compares what your own client sees (the summoner and the
 landing area in the summon popup, the positions and combat state of your group,
 the zone's level range) with what you agreed to: the warlock and the place come
 from the ride and the stand you requested, and the Trust line from the ratings
-your addon holds. Ratings rest on the sender field of addon messages, which the
+your addon holds. A stand's zone is your own client's name for the stand's
+map, never the zone text another addon sends. Ratings rest on the sender field of addon messages, which the
 server fills in, so a rating counts fully only when it comes straight from the
 player who gave it; a Trust rating counts fully only when the warlock's own ride
 log names the rater as the traveler of that ride. Second-hand copies (relays) go
@@ -83,16 +85,25 @@ relayer caught contradicting the real rater gets strikes and is ignored after
 three. A traveler who dies within two minutes of arriving counts as a heavy 1★
 against the warlock, but only when the death is corroborated. Scores include a
 prior, so one fresh 5★ cannot make a new warlock look perfect. One rider, one
-vote: of all the ratings one player gave a warlock, only the newest counts.
+vote: of all the ratings one player gave a warlock, only the newest counts. The
+summon count ("137 summons") counts a ride only when both sides vouched for it,
+the traveler's arrival and the warlock's ride log, and at most one ride per
+traveler per day, plus the rides behind counted ratings and deaths; it is a
+display figure and never clears "New". A warlock's ride log is only made for a
+traveler it actually summoned (or opened a portal for).
 **Known limits:** there is no central server, so a ring of alts can still rate
 each other: each alt is one vote, a full two-sided one if the warlock logs a
 ride for it, so a ring of five clears "New" and lifts the score as five real
 riders would (the ratings are strangers' with no shared history, and one honest
-1★ or one death weighs against them); relays can be invented, which is why
-their total weight is capped; editing your own SavedVariables only fools yourself; two players may see
-slightly different numbers until their addons sync; a crash before logout loses
-that session's new ratings; and the guard cannot see a mob that wanders onto the
-spot after you accept.
+1★ or one death weighs against them); a death can be faked against an honest
+warlock by a character he really summoned once: it reports its own death
+within two minutes and is never played again, so nobody ever sees it alive to
+catch the lie, and the warlock's own ride log makes the report heavy; relays
+can be invented, which is why their total weight is capped; editing your own
+SavedVariables only fools yourself; two players may see slightly different
+numbers until their addons sync; a crash before logout loses that session's
+new ratings; and the guard cannot see a mob that wanders onto the spot after
+you accept.
 
 ## Tests
 
@@ -137,7 +148,8 @@ Files load in the order of `Taxi/Taxi.toc`.
   tests and `/taxi sim` run the same Engine on.
 - `Taxi/UI/`: the windows. They talk to the Engine and use Domain helpers (money,
   names, board and rating text), and read a few game facts directly: combat
-  lockdown, the summon popup and sounds.
+  lockdown, the summon popup, sounds, the cursor position (dragging the
+  minimap button), the date (the History tab's times) and the Minimap frame.
 
 The design is in [docs/superpowers/specs/2026-10-17-uber-forever-design.md](docs/superpowers/specs/2026-10-17-uber-forever-design.md).
 

@@ -4,8 +4,11 @@ local _, ns = ...
 -- WoW API. A few constants that belong to one file's own mechanism stay there:
 -- Core/Init.lua (channel join timing), App/Engine.lua (pump and sweep
 -- intervals), App/Driver.lua (invite and raid timeouts, seat limits),
--- App/Traveler.lua (landing window, jump and crew distances), Comms/Transport.lua
--- (chunk limits, throttle wait), Game/WoW.lua (poll and trade timings) and
+-- App/Traveler.lua (landing window, jump and crew distances, the guard's
+-- recheck interval), App/Clicker.lua (MAX_PCT, the largest share asked),
+-- Domain/Witness.lua (MAX_OPEN_RIDES per traveler, TRANSPORT_SLACK on the death
+-- window), Comms/Transport.lua (chunk limits, throttle wait, which messages
+-- wait behind the others), Game/WoW.lua (poll and trade timings) and
 -- UI/Dialogs.lua (toast time).
 local M = {
   -- Names
