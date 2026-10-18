@@ -251,6 +251,24 @@ describe("summon flow", function()
     assert.are.equal(2500, ended.owed); assert.are.equal(2500, ended.received); assert.are.equal(5, ended.prefill)
     assert.are.same({}, ended.disputed)
   end)
+
+  it("a ritual cast by hand, not with Summon next: the tip is shared and acknowledged, but no ride log goes out (R70)", function()
+    local s = crewUp()
+    local key = "Tra Veler#"..s.standId
+    t.engine:requestRide(s.standId, 10000); w:advance(2)
+    lock.engine:acceptRequest(key); w:advance(2); w:acceptInvite("Tra Veler"); w:advance(2)
+    w:offerSummon("Dar Kbolt", "Tra Veler"); w:acceptSummon("Tra Veler"); w:advance(2) -- no nextTraveler
+    assert.are.equal("arrived", lock.engine.rides[key].state)
+    local rideId = t.engine.rides[key].rideId
+    assert.is_true(t.engine:submitArrival(rideId, nil, 10000))
+    w:trade("Tra Veler", "Dar Kbolt", 10000); w:advance(3)
+    assert.are.equal(1, #wireOf(ns, w, "TIP_ACK", "Dar Kbolt"))
+    assert.are.equal("done", lock.engine.rides[key].state)
+    assert.are.same({{clicker = "Cee One", owed = 2500, received = 0}, {clicker = "Cee Two", owed = 2500, received = 0}},
+      lock.engine:payoutList())
+    assert.are.same({}, wireOf(ns, w, "RIDE_LOG", "Dar Kbolt"))
+    assert.is_nil(lock.db.rideLogs["Dar Kbolt"])
+  end)
 end)
 
 -- Beyond the brief --------------------------------------------------------------
@@ -522,15 +540,20 @@ describe("Driver", function()
     assert.are.equal("Tre Two", lock.engine:nextTraveler())
   end)
 
-  it("Summon next moves the ride to summoning, and only then does its ARRIVED log the ride (R52)", function()
+  it("takes the ARRIVED of a ride not summoned through Summon next for the tip, but logs nothing (R52, R70)", function()
     local s = lock.engine:openStand{kind = "lock"}; w:advance(1)
     local mine, ride = grouped(t, s)
     assert.are.equal("grouped", mine.state)
-    -- An ARRIVED for a ride nobody summoned is not an arrival: no log, no RIDE_LOG.
     t.engine:send("ARRIVED", {rideId = ride.rideId, warlock = "Dar Kbolt"}, "WHISPER", "Dar Kbolt"); w:advance(2)
-    assert.are.equal("grouped", mine.state)
-    assert.is_nil(lock.db.rideLogs["Dar Kbolt"])
+    assert.are.equal("arrived", mine.state) -- for the ride's state and its tip
+    assert.is_nil(lock.db.rideLogs["Dar Kbolt"]) -- but no proof of a summon: no log, no RIDE_LOG
     assert.are.same({}, wireOf(ns, w, "RIDE_LOG", "Dar Kbolt"))
+  end)
+
+  it("Summon next moves the ride to summoning, and then its ARRIVED logs the ride (R52)", function()
+    local s = lock.engine:openStand{kind = "lock"}; w:advance(1)
+    local mine, ride = grouped(t, s)
+    assert.are.equal("grouped", mine.state)
     -- The button press: the ride is summoning, and stays the one the button is for.
     assert.are.equal("Tra Veler", lock.engine:nextTraveler())
     assert.are.equal("summoning", mine.state)

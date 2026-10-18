@@ -565,7 +565,8 @@ describe("forged arrival", function()
   it("gets no ride log out of the warlock, so the death it claims stays light", function()
     local f = {rideId = ride.rideId, warlock = "Hon Lock"}
     thr.engine:send("ARRIVED", f, "CHANNEL"); thr.engine:send("ARRIVED", f, "WHISPER", "Hon Lock"); w:advance(3)
-    assert.are.equal("grouped", lock.engine.rides["Thr Ow#" .. stand.standId].state)
+    -- The warlock's side takes it for the ride's state and tip (R70), but logs nothing.
+    assert.are.equal("arrived", lock.engine.rides["Thr Ow#" .. stand.standId].state)
     for _, p in ipairs{lock, obs} do
       assert.is_nil(p.db.rideLogs["Hon Lock"], p.name)
     end

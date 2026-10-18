@@ -90,15 +90,19 @@ summon count ("137 summons") counts a ride only when both sides vouched for it,
 the traveler's arrival and the warlock's ride log, and at most one ride per
 traveler per day, plus the rides behind counted ratings and deaths; it is a
 display figure and never clears "New". A warlock's ride log is only made for a
-traveler it actually summoned (or opened a portal for).
+ride the warlock pressed Summon next for; a ritual cast by hand still counts the
+ride's tip for the clickers, but makes no log, and portal rides are never
+logged.
 **Known limits:** there is no central server, so a ring of alts can still rate
 each other: each alt is one vote, a full two-sided one if the warlock logs a
 ride for it, so a ring of five clears "New" and lifts the score as five real
 riders would (the ratings are strangers' with no shared history, and one honest
 1★ or one death weighs against them); a death can be faked against an honest
-warlock by a character he really summoned once: it reports its own death
-within two minutes and is never played again, so nobody ever sees it alive to
-catch the lie, and the warlock's own ride log makes the report heavy; relays
+warlock by a character in his group once he has pressed Summon next for it: its
+addon announces an arrival (it need not even take the summon), reports its own
+death within two minutes and the character is never played again, so nobody
+ever sees it alive to catch the lie, and the warlock's own ride log makes the
+report heavy; relays
 can be invented, which is why their total weight is capped; editing your own
 SavedVariables only fools yourself; two players may see slightly different
 numbers until their addons sync; a crash before logout loses that session's

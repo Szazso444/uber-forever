@@ -61,6 +61,7 @@ function M.upsert(b, view, now)
   end
   view.seenAt = view.seenAt or now
   b.stands[view.standId] = view
+  return true
 end
 
 function M.remove(b, standId)

@@ -188,13 +188,13 @@ describe("Board", function()
 
     it("keeps only an owner's newest stand: a new id replaces the older one (M6)", function()
       local b = B.new()
-      B.upsert(b, view("Ann A@100", "Ann A"), 0)
+      assert.is_true(B.upsert(b, view("Ann A@100", "Ann A"), 0)) -- stored
       B.upsert(b, view("Bob B@100", "Bob B"), 0)
-      B.upsert(b, view("Ann A@200", "Ann A"), 10)
+      assert.is_true(B.upsert(b, view("Ann A@200", "Ann A"), 10))
       assert.is_nil(B.get(b, "Ann A@100"))
       assert.are.same({"Ann A@200", "Bob B@100"}, {B.list(b, {})[1].standId, B.list(b, {})[2].standId})
       -- A late heartbeat of the old stand does not bring it back, nor push the new one out.
-      B.upsert(b, view("Ann A@100", "Ann A"), 20)
+      assert.is_false(B.upsert(b, view("Ann A@100", "Ann A"), 20)) -- not stored
       assert.is_nil(B.get(b, "Ann A@100"))
       assert.is_not_nil(B.get(b, "Ann A@200"))
       -- Owners are compared as names; ids that carry no time go by the one heard last.

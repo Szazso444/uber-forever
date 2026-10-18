@@ -95,6 +95,49 @@ describe("portal flow", function()
     assert.are.equal("arrived", mine.state)
   end)
 
+  it("one Open portal serves every rider to that city: both arrive on the mage's side and both tips are acknowledged (R70)", function()
+    local t2 = w:addPlayer{name = "Tre Two", class = "PRIEST", level = 40, place = "ironforge", money = 50000}
+    local s = mage.engine:openStand{kind = "mage", seats = 3}; w:advance(1)
+    local rides = {}
+    for _, p in ipairs{t, t2} do
+      rides[p.name] = assert(p.engine:requestRide(s.standId, 5000, "stormwind"))
+    end
+    w:advance(2)
+    for _, p in ipairs{t, t2} do
+      assert.is_string(mage.engine:acceptRequest(p.name .. "#" .. s.standId))
+    end
+    w:advance(2)
+    for _, p in ipairs{t, t2} do assert.is_true(w:acceptInvite(p.name)) end
+    w:advance(1)
+    local function mine(p) return mage.engine.rides[p.name .. "#" .. s.standId] end
+    assert.are.equal("Tra Veler", mage.engine:nextTraveler()) -- Open portal, once
+    assert.are.same({"portal", "portal"}, {mine(t).state, mine(t2).state})
+    w:advance(1)
+    assert.is_true(w:castPortal("Mag Ister", "stormwind"))
+    for _, p in ipairs{t, t2} do assert.is_true(w:usePortal(p.name, "stormwind")) end
+    w:advance(2)
+    assert.are.same({"arrived", "arrived"}, {mine(t).state, mine(t2).state})
+    for _, p in ipairs{t, t2} do
+      assert.is_true(p.engine:submitArrival(rides[p.name].rideId, nil, 5000))
+      assert.is_true(w:trade(p.name, "Mag Ister", 5000)); w:advance(2)
+    end
+    assert.are.equal(2, #wireOf(ns, w, "TIP_ACK", "Mag Ister"))
+    assert.are.same({"done", "done"}, {mine(t).state, mine(t2).state})
+  end)
+
+  it("Open portal moves only the riders to that city (R70)", function()
+    local t2 = w:addPlayer{name = "Tre Two", class = "PRIEST", level = 40, place = "ironforge"}
+    local s = mage.engine:openStand{kind = "mage", seats = 3}; w:advance(1)
+    t.engine:requestRide(s.standId, 0, "stormwind"); t2.engine:requestRide(s.standId, 0, "darnassus"); w:advance(2)
+    for _, p in ipairs{t, t2} do assert.is_string(mage.engine:acceptRequest(p.name .. "#" .. s.standId)) end
+    w:advance(2)
+    for _, p in ipairs{t, t2} do assert.is_true(w:acceptInvite(p.name)) end
+    w:advance(1)
+    assert.are.equal("Tra Veler", mage.engine:nextTraveler())
+    assert.are.same({"portal", "grouped"},
+      {mage.engine.rides["Tra Veler#" .. s.standId].state, mage.engine.rides["Tre Two#" .. s.standId].state})
+  end)
+
   it("stars rejected for portal rides", function()
     local _, ride = grouped()
     mage.engine:nextTraveler(); w:advance(1)

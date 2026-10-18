@@ -468,18 +468,30 @@ function Engine:nextRide()
 end
 
 -- The traveler nextRide names, for the player's click on that button. The
--- click is what moves my ride on (R52): a summon ride to summoning, a portal
--- ride to portal; only a ride I summoned or opened a portal for can arrive.
--- PORTAL_UP goes to the group, so the clickers (or a mage's travelers) know to
--- click. Returns the name, or nil when nobody is waiting.
+-- click is what moves my rides on (R52, R70): that summon ride to summoning
+-- (only a ride summoned this way is logged when it arrives); for a portal,
+-- every grouped ride to the same city, since one portal takes all of them
+-- (portal rides are never logged). PORTAL_UP goes to the group, so the
+-- clickers (or a mage's travelers) know to click. Returns the name, or nil
+-- when nobody is waiting.
 Engine.nextTraveler = Engine.action(function(e)
   local ride = e:nextRide()
   if ride == nil then
     return nil
   end
-  if ride.state == "grouped" then
-    Ride.apply(ride, ride.kind == "summon" and "SUMMON_OFFERED" or "PORTAL_UP", e.clock:now())
-    e:emit("RIDE_CHANGED", ride)
+  local now = e.clock:now()
+  if ride.kind == "summon" then
+    if ride.state == "grouped" then
+      Ride.apply(ride, "SUMMON_OFFERED", now)
+      e:emit("RIDE_CHANGED", ride)
+    end
+  else
+    for _, other in ipairs(part(e.stand, "queue")) do
+      if other.kind == "portal" and other.state == "grouped" and other.dest == ride.dest then
+        Ride.apply(other, "PORTAL_UP", now)
+        e:emit("RIDE_CHANGED", other)
+      end
+    end
   end
   e:send("PORTAL_UP", { dest = ride.dest }, e:groupDist())
   return ride.traveler
@@ -536,14 +548,16 @@ end
 
 -- Arrival and tips ----------------------------------------------------------------------
 
--- One of my travelers arrived. Only a ride I summoned or opened a portal for
--- (summoning or portal, see nextTraveler) can arrive (R52): a traveler who was
+-- One of my travelers arrived. A summon ride is logged only when I summoned it
+-- with Summon next (summoning, see nextTraveler; R52): a traveler who was
 -- merely grouped gets no ride log, so a throwaway can't get one to back a
--- death it then claims. A summon ride is logged, through the path that files a
--- heard log (fileRideLog: my own witness hears it too), and the log goes out as
--- RIDE_LOG, the proof that makes the traveler's rating two-sided (portal rides
--- are never rated). A TIP heard before the arrival now counts for the shifts
--- the arrival falls in (R39).
+-- death it then claims. Such a ride (a ritual cast by hand, say) still arrives
+-- here (R70), so its tip is acknowledged and shared with the clickers. The log
+-- is filed through the path that files a heard log (fileRideLog: my own
+-- witness hears it too), and goes out as RIDE_LOG, the proof that makes the
+-- traveler's rating two-sided. A portal ride arrives once its portal is up
+-- (portal, see nextTraveler) and is never logged or rated. A TIP heard before
+-- the arrival now counts for the shifts the arrival falls in (R39).
 Engine.handlers.ARRIVED = function(e, msg, sender)
   if not Names.same(msg.warlock, e.me) then
     return
@@ -553,10 +567,14 @@ Engine.handlers.ARRIVED = function(e, msg, sender)
     return
   end
   local now = e.clock:now()
+  local summoned = ride.state == "summoning"
+  if ride.kind == "summon" and ride.state == "grouped" then
+    Ride.apply(ride, "SUMMON_OFFERED", now)
+  end
   if not Ride.apply(ride, "ARRIVED", now) then
     return
   end
-  if ride.kind == "summon" then
+  if ride.kind == "summon" and summoned then
     e:fileRideLog(e.me, ride.rideId, now, ride.traveler, now)
     e:send("RIDE_LOG", { rideId = ride.rideId, traveler = ride.traveler }, "CHANNEL")
   end
