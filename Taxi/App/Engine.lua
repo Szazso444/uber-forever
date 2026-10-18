@@ -230,10 +230,14 @@ end
 
 -- Switches sending off (on = true) or on again: while /taxi sim shows another
 -- player's engine, the real one must not put anything on the real channel. What
--- was queued but not yet sent is dropped. Receiving goes on.
+-- was queued but not yet sent is dropped. Receiving goes on. One exception
+-- (R62): the player's own DEATH report is never held back, because a Hardcore
+-- death is final and the report cannot be sent later. So a DEATH is sent while
+-- muted, and a dead Hardcore character's queue (which holds nothing but that
+-- DEATH, see Reputation's PLAYER_DIED) is not dropped.
 function Engine:mute(on)
   self.muted = on == true
-  if self.muted then
+  if self.muted and not (self.game:isHardcore() and self.game:isDead()) then
     self.transport:clear()
   end
 end
@@ -242,13 +246,13 @@ end
 --   "dead"      a dead Hardcore character sends nothing but its DEATH report;
 --   "disabled"  no channel, so no CHANNEL messages;
 --   "stopped"   the engine was stopped;
---   "muted"     see Engine:mute;
+--   "muted"     see Engine:mute (everything but a DEATH report);
 --   "too_large" from the transport.
 function Engine:send(msgType, fields, dist, target)
   if self.stopped then
     return nil, "stopped"
   end
-  if self.muted then
+  if self.muted and msgType ~= "DEATH" then
     return nil, "muted"
   end
   if msgType ~= "DEATH" and self.game:isHardcore() and self.game:isDead() then

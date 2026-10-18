@@ -15,9 +15,10 @@ How the file is laid out:
   world, alone, no group needed.
 - **Part 2** is the real client, grouped by area (A to O). Each item says what
   it **Needs**, what to **Do**, what to **Expect**, and (where a mismatch has an
-  obvious place to fix it) **If wrong**. By design a mismatch is fixed in the
-  game adapter (`Taxi/Game/WoW.lua`, `Taxi/Core/Init.lua`) or in the ids in
-  `Taxi/Core/Config.lua`, never in `Domain/` or `App/`.
+  obvious place to fix it) **If wrong**. By design a mismatch with the game is
+  fixed in the game adapter (`Taxi/Game/WoW.lua`, `Taxi/Core/Init.lua`), in the
+  ids in `Taxi/Core/Config.lua` or in a timing constant named in Setup, not in
+  the rules in `Domain/`.
 - Characters needed over the whole list: two accounts for the 2-character
   items; a **warlock of level 20 or more** (W) with soul shards, **two clickers**
   (C1, C2: any class, any level) and **a traveler** (T) for the 4-character
@@ -34,6 +35,17 @@ How the file is laid out:
   logged; the last 0:`. Any other count lists the errors: copy them.
 - Chat lines hold 255 characters, so the `/run` lines below are short on
   purpose. Paste them as written.
+- A probe snippet that raises an error ("attempt to call a nil value") is a
+  result, not a Taxi failure: it says that API does not exist in Forever. Write
+  it next to the item.
+- Constants a result may ask you to change (anything else is a code change):
+  `JOIN_DELAY`, `JOIN_POLL`, `JOIN_TIMEOUT` in `Taxi/Core/Init.lua`;
+  `LANDING_WINDOW`, `JUMP_YARDS`, `CREW_YARDS` in `Taxi/App/Traveler.lua`;
+  `INVITE_TIMEOUT`, `RAID_TIMEOUT` in `Taxi/App/Driver.lua`; `PUMP_INTERVAL`
+  in `Taxi/App/Engine.lua`; `POLL_SECONDS`, `MOVE_YARDS`,
+  `TRADE_SETTLE_SECONDS`, `TIP_HOLD_SECONDS` in `Taxi/Game/WoW.lua`; and in
+  `Taxi/Core/Config.lua` `STAND_MOVE_YARDS`, `GUARD_YARDS`, `PORTALS`,
+  `RITUAL_SPELL`, `SOUL_SHARD_ITEM`.
 - Two helpers (paste once per character per session):
   - Addon messages: `/run TaxiW=CreateFrame("Frame");TaxiW:RegisterEvent("CHAT_MSG_ADDON");TaxiW:SetScript("OnEvent",function(_,_,p,m,d,s) if p=="TaxiFvr" then print(d,s,(m or ""):sub(1,30)) end end)`
     prints the distribution, the sender and the start of every Taxi message.
@@ -55,10 +67,11 @@ you answer for them in windows marked "(sim)". Answer a request within 30
 seconds and take an invite within 60, or the sim traveler gives up, like a real
 one.
 
-**Don't play Hardcore content while /taxi sim is on — real death reports are
-paused.** (The real Engine is muted for the whole sim, so a real death is not
-reported until `/taxi sim off`. A real summon still gets its real Summon Guard
-panel next to the real popup; the sim's panels say "(sim)".)
+**While /taxi sim is on, real death reports still go out; everything else from
+the real addon is paused until `/taxi sim off`.** (The real Engine is muted for
+the whole sim: it sends nothing, except your own character's DEATH report,
+which is never held back. A real summon still gets its real Summon Guard panel
+next to the real popup; the sim's panels say "(sim)".)
 
 ### The board
 - [ ] Travel > Summons: Dar Kbolt first and in green ("★ 4.7 · 6 summons"), then
@@ -104,19 +117,36 @@ panel next to the real popup; the sim's panels say "(sim)".)
 - [ ] Advance 60 s moves the sim clock; status lines render in the footer.
 - [ ] `/taxi sim off` brings the real window back; nothing was sent to the real
       channel; the "New ratings are saved" reminder never showed in the sim.
-- [ ] A real ride or summon while the sim is on (do this only on a normal
-      ruleset, never mid-ride on Hardcore): the real guard panel still shows
-      (see G7). The real arrival (rating and tip) window and the real shift-end
-      window do **not** show during the sim, because they are tied to the real
-      character being the active one. By the code they are not replayed after
-      `/taxi sim off` either; the ride-request toast and clicker offers (views
-      over Engine state) do come back at once. Record what you actually see
-      after `/taxi sim off`, and that `/taxi debug` stays at 0 errors.
+      Do: the real character has a stand open (E1) and a second account runs
+      the addon-messages helper (Setup); start `/taxi sim`, play two minutes,
+      `/taxi sim off`. Expect: the second account's helper prints no line from
+      the real character while the sim runs (a real death report is the one
+      exception, L6) and prints heartbeats again within a minute after
+      `/taxi sim off`; the reminder never showed during the sim.
+- [ ] A real ride or summon while the sim is on (a normal ruleset only). Do: in
+      a real ride (G4) type `/taxi sim`, let the real warlock cast the summon
+      (G5), accept it (G6), then `/taxi sim off`. Expect: the real guard panel
+      shows beside the real popup (G7). The real arrival (rating and tip)
+      window and the real shift-end window do **not** show during the sim,
+      because they are tied to the real character being the active one; by the
+      code they are not replayed after `/taxi sim off` either, so that ride's
+      rating prompt is lost. The ride-request toast and clicker offers (views
+      over Engine state) should come back at once after `/taxi sim off`; that
+      is read from the code, not seen, so verify it. Record what you see, and
+      that `/taxi debug` stays at 0 errors.
 
 ### Only the game can tell
-- [ ] The glyphs draw (not as boxes): ★ ⚠ → · in the board, the guard panel, the
-      footer and `/taxi debug`; ✓ ✗ in the guard panel (and ✓ in the shift-end
-      window); … in "… more checks failed". The swap points: ★ ✓ ✗ are `W.STAR`,
+- [ ] The glyphs draw (not as boxes). Do: look at each place: the board and
+      the arrival window in the sim, a guard panel, the shift-end window and
+      `/taxi debug`. Where each one appears: ★ in the trust and share lines
+      ("★ 4.7 · 6 summons") on the Travel and Clicking rows and on the clickable
+      stars of the arrival and shift-end windows; ⚠ in "⚠ 1 reported death" on a
+      stand row and in the arrival window's "⚠ You landed away from the agreed
+      spot."; → in the yellow guard line "Not a Taxi ride: X → area"; · in the
+      trust line, the stand header, the footer and the first two `/taxi debug`
+      lines; ✓ ✗ at the start of each Summon Guard line (and ✓ after "Received"
+      in the shift-end window); … in "… more checks failed" (only with more
+      than nine checks, so rarely). The swap points: ★ ✓ ✗ are `W.STAR`,
       `W.CHECK` and `W.CROSS` (one line each, `Taxi/UI/Widgets.lua`); the rest
       sit inside strings in `Taxi/Core/Locale.lua` (★ `TRUST_LINE`,
       `SHARE_LINE`; ⚠ `DEATHS_ONE`, `DEATHS_MANY`, `ARRIVE_WRONG`; → `GUARD_NO_RIDE`;
@@ -144,10 +174,11 @@ the real popup is G10.
       folder), log in with "Load out of date AddOns" **unticked**. Expect: Taxi
       is in the AddOns list, enabled, no out-of-date mark. If wrong:
       `## Interface:` in `Taxi/Taxi.toc`.
-- [ ] **A3. No TOC filename suffix needed (spec §16.1).** Expect: the AddOns list
-      shows "Taxi" with the note "Trust-based summon and portal board for WoW
-      Forever" while the file is the plain `Taxi.toc`. If Taxi is missing,
-      Forever wants a suffixed TOC name.
+- [ ] **A3. No TOC filename suffix needed (spec §16.1).** Do: after A2, open
+      the AddOns list (character select screen). Expect: "Taxi" is listed with
+      the note "Trust-based summon and portal board for WoW Forever" while the
+      file is the plain `Taxi.toc`. If Taxi is missing, Forever wants a
+      suffixed TOC name.
 - [ ] **A4. A quiet, healthy start.** Do: `/reload`, wait 10 seconds,
       `/taxi debug`. Expect: no Lua error popup, no "action blocked" popup, and
       three lines: `Taxi 0.1.0 · protocol 1 · data 1`, `Engine running ·
@@ -166,9 +197,9 @@ the real popup is G10.
       adapter calls that Forever lacks.
 - [ ] **A6. SavedVariables are written.** Do: play a minute, `/reload` (or log
       out). Expect: `Taxi.lua` exists under `WTF\Account\<account>\SavedVariables\`
-      (it holds `TaxiDB`, with `["version"] = 1`) and under the character's own
-      `SavedVariables` folder (`TaxiCharDB`, with `stand = {seats = 3,
-      clickerPct = 25, note = ""}`).
+      (it holds `TaxiDB`, with `["version"] = 1`) and under
+      `WTF\Account\<account>\<Realm>\<Character>\SavedVariables\` (it holds
+      `TaxiCharDB`, with `stand = {seats = 3, clickerPct = 25, note = ""}`).
 
 ### B. Chat channel and addon messages
 
@@ -185,26 +216,38 @@ the real popup is G10.
       then `/leave TaxiTest`. Expect: `id after <seconds>`. Record the number.
       Taxi waits up to 10 seconds. If it prints more than 10 or nothing while
       free slots exist, raise `JOIN_TIMEOUT` in `Taxi/Core/Init.lua`.
-- [ ] **B3. `/reload` while in the channel does not break it.** Do: `/reload`,
-      wait 10 seconds. Expect: the same channel number as before, `/taxi debug`
-      says `Engine running`, 0 errors.
+- [ ] **B3. `/reload` while in the channel does not break it, and Taxi does not
+      join twice.** Do: `/reload`, wait 10 seconds, then run
+      `/run print(GetChannelList())` and `/taxi debug`. Expect: TaxiForever is
+      listed once with the same number as before, no new "Joined Channel" line
+      for it appears in chat after the reload (the channel was still joined,
+      so Taxi does not join again), `/taxi debug` says `Engine running`, 0
+      errors.
 - [ ] **B4. All 10 channel slots taken.** Do: `/join` test channels until
       `/run print(GetChannelList())` shows 10, leave Taxi's out of them (`/leave
       TaxiForever`) and `/reload`. Expect: the join leaves the id at 0; about 15
       seconds after entering the world chat says `Taxi: Taxi needs a free chat
-      channel. Leave one (e.g. /leave 5) and /reload.`; `/taxi debug` says
-      `Engine disabled (no channel)`; a Request says "Taxi has no chat channel,
-      so nothing can be sent."; after leaving one test channel and `/reload`,
-      Taxi runs. Clean up the test channels.
-- [ ] **B5. Send results are the enum numbers.** Do: `/run print(C_ChatInfo.SendAddonMessage("TaxiFvr","x","CHANNEL",tostring(GetChannelName("TaxiForever"))))`
-      Expect: `0`, a number and not `true`. (Other Taxi clients ignore the `x`.)
-      If wrong: the result mapping in `Backend.send`, `Taxi/Game/WoW.lua`.
+      channel. Leave one (e.g. /leave 5) and /reload.` (chat only while the
+      Taxi window is closed; with it open the line is in the footer);
+      `/taxi debug` says `Engine disabled (no channel)`; a Request says "Taxi
+      has no chat channel, so nothing can be sent."; after leaving one test
+      channel and `/reload`, Taxi runs. Clean up the test channels.
+- [ ] **B5. Send results are the enum numbers (0, 3, 8, 11).** Do:
+      `/run print(C_ChatInfo.SendAddonMessage("TaxiFvr","x","CHANNEL",tostring(GetChannelName("TaxiForever"))))`
+      and then, to hit the throttle,
+      `/run for i=1,15 do print(C_ChatInfo.SendAddonMessage("TaxiFvr","x","CHANNEL",tostring(GetChannelName("TaxiForever")))) end`
+      Expect: the first prints `0` (a number, not `true`); the burst prints 0s
+      and, once the game's throttle bites, 3 (addon-message throttle) or 8
+      (channel throttle). Inside an instance the same call gives 11 (M1). Other
+      Taxi clients ignore the `x`. If wrong: the result mapping in
+      `backend.send` (in `Backend.new`, `Taxi/Game/WoW.lua`) and the codes
+      `Taxi/Comms/Transport.lua` reads.
 - [ ] **B6. Channel messages reach other players.** Needs: 2 accounts in the
       channel. Do: A pastes the addon-messages helper; B opens a stand (My stand
       tab, Open stand). Expect: A's chat prints lines starting with `CHANNEL`
       and B's name; A's Travel tab lists B's stand within seconds. If the
-      lines never come, the send target for `CHANNEL` (the channel's id as a
-      string) is wrong.
+      lines never come, the send target for `CHANNEL` in `backend.send` (the
+      channel's id as a string) is wrong.
 - [ ] **B7. Channel limits with many users (spec §16.8).** Needs: a busy place
       and a few players with Taxi. Do: leave Taxi running a while where many
       players have it; try `/chatlist TaxiForever` (if Forever has the
@@ -215,13 +258,22 @@ the real popup is G10.
       within about a minute; whether `/taxi debug` shows send or throttle
       errors. If the channel does not scale, the channel name needs sharding:
       report it, it is a design change.
+- [ ] **B8. The newer-version notice.** Needs: 2 accounts. Do: on one, change
+      `PROTOCOL = 1` to `2` in `Taxi/Core/Config.lua`, `/reload`, and open a
+      stand; leave the other on 1. Expect: the other client says "A newer Taxi
+      version is in use. Please update." once (in chat while its window is
+      closed, in the footer while it is open) and does not list the stand.
+      Change `PROTOCOL` back afterwards.
 
 ### C. Names (the most important area)
 
 A player is their full two-part name, compared exactly. These must come out
 identical after Taxi tidies them: `UnitName("party1")`, the summoner in the
 summon popup, the `CHAT_MSG_ADDON` sender, the guild roster and
-`HARDCORE_DEATHS`.
+`HARDCORE_DEATHS`. The tidying is `canonical()` in `Taxi/Game/WoW.lua`: it drops
+your own realm's `-Realm` suffix (another realm's is kept) and runs
+`Names.normalize`, which only collapses ASCII whitespace, so a special surname
+separator survives.
 
 - [ ] **C1. The form of a name.** Needs: 2 chars in a party. Do:
       `/run print(UnitName("party1"))`, `/dump {(UnitName("party1")):byte(1,-1)}`
@@ -246,23 +298,31 @@ summon popup, the `CHAT_MSG_ADDON` sender, the guild roster and
 - [ ] **C5. The guild roster name.** Needs: a guild. Do: `/run print(GetNumGuildMembers(),GetGuildRosterInfo(1))`
       Expect: a number above 0 and a name in the same form as C1 (possibly with
       `-Realm`).
-- [ ] **C6. The `HARDCORE_DEATHS` name.** See L2.
-- [ ] **C7. The names agree end to end.** Evidence, not a command: on an honest
-      4-character run the guard panel (G7) says "✓ Summoner: W", and W's toast,
-      the invite and the Accepted state work (G3 to G5). If the guard says "✗
-      Summoner: X (agreed: Y)" while X and Y look the same, the forms differ:
-      compare the bytes from C1, C3 and C4 and fix `canonical` or `fullName` in
+- [ ] **C6. The `HARDCORE_DEATHS` name.** Needs: Hardcore live and two
+      characters with the death-notices helper (Setup). Do: as in L2; compare
+      the name the helper prints with C1's. Expect: the same form as `UnitName`
+      (Taxi matches deaths to rides by that name). If it differs, fix
+      `canonical()` or the `HARDCORE_DEATHS` handler in `Taxi/Game/WoW.lua`.
+- [ ] **C7. The names agree end to end.** Needs: the 4-character run. Do: G1
+      to G7 and read the first line of T's Summon Guard panel. Expect: "✓
+      Summoner: W". If it says "✗ Summoner: X (agreed: Y)" while X and Y look
+      the same, the forms differ: compare the bytes from C1, C3 and C4 and fix
+      `canonical()` or `fullName()` in `Taxi/Game/WoW.lua`.
+- [ ] **C8. The invite and the whisper accept that form.** Needs: the
+      4-character run. Do: G2 to G4 (T presses Send, W presses Accept in the
+      toast). Expect: W's toast appears (the whispered REQUEST arrived), T gets
+      the party invite (`C_PartyInfo.InviteUnit`) and T's row says "Accepted -
+      join group" (the whispered ACCEPT arrived). If a name with a surname
+      separator is refused, look at `Game.invite` and `backend.send` in
       `Taxi/Game/WoW.lua`.
-- [ ] **C8. The invite and the whisper accept that form.** Evidence: during G3 to
-      G4, W's toast appears (the whispered request arrived), T gets the invite
-      and "Accepted - join group" (the whispered ACCEPT arrived). If a
-      surname-separator name is refused, look at `Game.invite` and
-      `Backend.send` in `Taxi/Game/WoW.lua`.
 - [ ] **C9. Names are never "secret" in the open world, and the not-yet-loaded
-      placeholder.** Evidence: `/taxi debug` shows no secret-value errors after
-      a group session, and the group lists show real names. Record what
-      `UnitName("party1")` returns for a member who has only just joined (the
-      adapter treats `UNKNOWNOBJECT` and `Unknown` as no name).
+      placeholder.** Do: during G4 run `/run print(UnitName("party1"))` the
+      moment T joins (a few times), run `/run print(UNKNOWNOBJECT)`, and after
+      a group session `/taxi debug`. Expect: `UnitName` gives a real name (or
+      the text `UNKNOWNOBJECT` holds, which the adapter treats, like
+      `Unknown`, as no name); `/taxi debug` shows no secret-value error; the
+      group lists show real names. Record what `UnitName("party1")` returned
+      for a member who had only just joined.
 
 ### D. Position, map, levels and group counts
 
@@ -271,10 +331,13 @@ summon popup, the `CHAT_MSG_ADDON` sender, the guild roster and
       in sight and again far away. Expect: numbers both times; inside an
       instance, nothing. (The guard's "Warlock is at the stand" check needs it;
       when the position is unknown the check fails and the panel is RED.)
-- [ ] **D2. `C_Map.GetBestMapForUnit` works for raid members.** Needs: a raid.
-      Do: `/run print(C_Map.GetBestMapForUnit("raid2"))` Expect: a map id
-      (Forever's docs promise it only for the player and party members). If it
-      is nil in a raid, the position check cannot be answered for raid rides.
+- [ ] **D2. Raid members have a map and a position.** Needs: a raid. Do:
+      `/run print(C_Map.GetBestMapForUnit("raid2"))` and
+      `/run print(UnitPosition("raid2"))`. Expect: a map id and position
+      numbers. Forever's docs promise `GetBestMapForUnit` only for the player
+      and party members, so raid support is an assumption (Task 16 report, item
+      12). If either is nil in a raid, the position check cannot be answered for
+      raid rides and the guard goes RED there.
 - [ ] **D3. Map levels.** Do: stand in a capital, then in a zone, and run
       `/run print(C_Map.GetMapLevels(C_Map.GetBestMapForUnit("player")))`.
       Expect: zeros (or nothing) in a city, the zone's level range in a zone.
@@ -300,9 +363,10 @@ summon popup, the `CHAT_MSG_ADDON` sender, the guild roster and
       on Travel > Summons within a heartbeat (60 seconds at most), in the right
       zone group, with its free seats; selecting the row shows the note, the
       clickers and the trust line, and sends one query.
-- [ ] **E2. Guildmates are green and first.** Needs: a guildmate with a stand.
-      Expect: the row is green and above non-guild rows (the roster names match,
-      C5).
+- [ ] **E2. Guildmates are green and first.** Needs: a guildmate with Taxi.
+      Do: the guildmate opens a stand (E1) while another stand is open too;
+      look at Travel > Summons. Expect: the guildmate's row is green and above
+      the non-guild rows (the roster names match, C5).
 - [ ] **E3. A stand that goes quiet leaves the board.** Do: end W's game without
       a clean close (kill the process). Expect: T's row is gone within about 3
       minutes and 5 seconds.
@@ -318,11 +382,13 @@ summon popup, the `CHAT_MSG_ADDON` sender, the guild roster and
       opens), picks a tip, Send. Expect: T's button shows "Waiting for an
       answer"; W's toast appears (G3). When W presses Decline: T's footer says
       "W declined your request." and the Request button comes back.
-- [ ] **E7. The stand header follows reality** (after F2). Expect:
-      Recruiting clickers; Live once two clickers have joined; Paused with "(in
-      combat)" while W or a clicker is in combat; Paused with "(no soul shards)"
-      when W has none (put the shards in the bank and see the header change
-      within a moment).
+- [ ] **E7. The stand header follows reality.** Needs: W with two clickers
+      (F2). Do: W opens the stand; then (a) W or a clicker enters combat and
+      leaves it; (b) W puts the soul shards in the bank, and takes them back.
+      Expect: the header reads Recruiting clickers before the clickers join,
+      Live once both have; Paused with "(in combat)" while W or a clicker is in
+      combat; Paused with "(no soul shards)" while W has none, each within a
+      moment.
 - [ ] **E8. The form refuses wrong input in plain words.** Do and expect: seats 0
       says "Seats must be a whole number from 1 to 37."; "Warlock summons" on a
       non-warlock says "Only a warlock can open a summon stand."; "Mage portals"
@@ -334,10 +400,11 @@ summon popup, the `CHAT_MSG_ADDON` sender, the guild roster and
       the stand. Expect: it either arrives whole on T's detail line or the form
       says "That note is too long to send."; never a Lua error. (Messages are at
       most 255 bytes; Taxi chunks longer ones.)
-- [ ] **E10. Faction filter.** Needs: one character of each faction. Expect: a
-      stand of the other faction is not on the board. If Forever does allow
-      cross-faction groups, drop the `faction = ...` filter in
-      `Taxi/UI/StandList.lua` and `Taxi/UI/Clicking.lua`.
+- [ ] **E10. Faction filter.** Needs: one character of each faction. Do: the
+      other faction's character opens a stand (E1); look at Travel > Summons
+      on the first faction's client. Expect: the stand is not on the board. If
+      Forever does allow cross-faction groups, drop the `faction = ...` filter
+      in `Taxi/UI/StandList.lua` and `Taxi/UI/Clicking.lua`.
 
 ### F. Clickers and crew (3 characters: W, C1, C2)
 
@@ -359,18 +426,20 @@ summon popup, the `CHAT_MSG_ADDON` sender, the guild roster and
       the Clicking tab) saying "W offers N% instead (you asked M%)." with Take
       it and Decline; Take it brings C2 in at N%; the asked-% box keeps what you
       typed through the 5-second repaint.
-- [ ] **F4. Crew by hand.** Do: W types a group member's name and a percentage
-      under Add crew and presses Add. Expect: they are listed; a name outside
-      the group says "They are not in your group."; adding a crew member twice
-      says "They are already in your crew."
+- [ ] **F4. Crew by hand.** Do: W types a group member's name in the "Crew
+      member" field and a percentage in the "%" box, then presses Add. Expect:
+      the member is listed in the "Crew" section; a name outside the group says
+      "They are not in your group."; adding the same member twice says "They
+      are already in your crew."
 - [ ] **F5. Dismiss and leave.** Do: W dismisses a clicker; another clicker
       presses Leave. Expect: the crew count drops, the stand header goes back
       to Recruiting clickers, and the clicker's Clicking tab says "You are not
       on a shift." (or shows the last shift).
-- [ ] **F6. Shift end and payout.** After a tipped ride (I4): C1 leaves. Expect:
-      C1 gets "Shift ended" with "Owed ... · Received ...", stars suggested from
-      what was paid (or optional when nothing was owed); W's Payouts show "Owed
-      ... · paid ..." with a Pay button (I6).
+- [ ] **F6. Shift end and payout.** Needs: a tipped ride (I4). Do: C1 presses
+      Leave on the Clicking tab. Expect: C1 gets "Shift ended" with "Owed ... ·
+      Received ...", stars suggested from what was paid (or optional when
+      nothing was owed); W's Payouts show "Owed ... · paid ..." with a Pay
+      button (I6).
 
 ### G. Summons: the full run (4 characters: W, C1, C2, T)
 
@@ -380,20 +449,22 @@ more than 100 yards; a summon that moves T less is not seen as an arrival.) W
 should stand in a zone with a known level range. This run also settles spec §16
 questions 2 and 3 (steps G6 and G8). Do it on a normal ruleset first.
 
-- [ ] **G1. W opens the stand and the clickers join** (E1, F1, F2 for C1 and
-      C2). Expect: header "Live", "Clickers 2/2".
-- [ ] **G2. T requests with a tip.** T: Travel > Summons > W > Request > 1g >
-      Send. Expect: footer "Requested a seat from W."; T's Request button on
-      W's row turns into "Waiting for an answer".
-- [ ] **G3. W's toast.** Expect: a window "Ride request" with a sound, naming T,
-      T's level, "Wants a summon", "Offers 1g" (and "Guildmate" if applicable).
-      Accept invites T.
-- [ ] **G4. T joins.** Expect: T gets the party invite (T accepts it by hand);
-      W's My stand first says "Invited - waiting for them to join", then "In
-      your group"; T's row says "In group - awaiting summon".
-- [ ] **G5. The secure Summon button** (W). Expect: the button reads "Summon T"
-      and is enabled; with nobody grouped it is greyed and "Nobody in your
-      group is waiting" shows. Click it once: Ritual of Summoning (spell 698)
+- [ ] **G1. W opens the stand and the clickers join.** Do: E1 for W, then F1
+      and F2 for C1 and for C2. Expect: header "Live", "Clickers 2/2".
+- [ ] **G2. T requests with a tip.** Do: T: Travel > Summons > W > Request >
+      1g > Send. Expect: footer "Requested a seat from W."; T's Request button
+      on W's row turns into "Waiting for an answer".
+- [ ] **G3. W's toast.** Do: W watches the screen after G2. Expect: a window
+      "Ride request" with a sound, naming T, T's level, "Wants a summon",
+      "Offers 1g" (and "Guildmate" if applicable). Accept invites T.
+- [ ] **G4. T joins.** Do: T accepts the party invite by hand; W and T watch
+      their tabs. Expect: W's My stand first says "Invited - waiting for them
+      to join", then "In your group"; T's row says "In group - awaiting
+      summon".
+- [ ] **G5. The secure Summon button** (W). Do: W looks at the button before T
+      has joined (G4) and after, then clicks it once. Expect: the button reads
+      "Summon T" and is enabled once T has joined; before that it is greyed and
+      "Nobody in your group is waiting" shows. The click: Ritual of Summoning (spell 698)
       starts on T, whoever W has targeted. This must work with "Cast action
       keybinds on key down" both on and off (Options > Controls). C1 and C2 get
       the banner "Portal is up - click it!" with a sound, exactly once per
@@ -448,7 +519,8 @@ questions 2 and 3 (steps G6 and G8). Do it on a normal ruleset first.
       opens (summon gone is read by polling `GetSummonConfirmSummoner` and
       `GetSummonConfirmTimeLeft`). If the panel stays until the popup would have
       expired, neither call clears after an accept.
-- [ ] **G12. Arrival.** Expect: the arrival window "You arrived" with the rating
+- [ ] **G12. Arrival.** Do: T accepts the summon (G6) and looks at the window
+      that opens. Expect: the arrival window "You arrived" with the rating
       stars ("Rate W (Trust):"), the tip picker with 1g already picked, Open
       trade with W, Stay and click, Leave group. History shows "Summon from W"
       with "Arrived" on T and "Summon for T" on W.
@@ -458,8 +530,12 @@ questions 2 and 3 (steps G6 and G8). Do it on a normal ruleset first.
       T's row goes back to "In group - awaiting summon" once; a second failed
       summon ends the ride ("Your request to W ended without a ride."). No
       rating window either time.
-- [ ] **G14. Portal-up alerts are group chat addon messages.** Evidence from G5:
-      C1 and C2 got the banner. In a raid (H3) the same message goes by `RAID`.
+- [ ] **G14. Portal-up alerts travel as group addon messages.** Do: C1 pastes
+      the addon-messages helper (Setup) before G5, then W clicks Summon; repeat
+      in the raid of H3. Expect: C1's helper prints a line with `PARTY` (and
+      `RAID` in a raid) and W's name, and the banner "Portal is up - click it!"
+      shows once per click. If it says `PARTY` in a raid, clickers in other
+      subgroups miss the banner (`Engine:groupDist`, `Taxi/App/Engine.lua`).
 
 ### H. Raid conversion (6 characters: W, C1, C2, T1, T2, T3)
 
@@ -473,7 +549,7 @@ questions 2 and 3 (steps G6 and G8). Do it on a normal ruleset first.
       confirmation. If `ConvertToRaid` is blocked from the click, the flow
       ends with "Couldn't convert the group to a raid." after 5 seconds and
       the request stays pending (the spec's hint to convert through Blizzard's
-      own menu is not shown by Taxi): convert by hand, then Accept works.
+      own menu is not shown by Taxi): convert by hand, then Accept should work.
 - [ ] **H3. Rides work in a raid.** Do: with 6 in the raid run G5 to G12 for T1.
       Expect: the Summon button targets the right traveler among raid units;
       the portal-up banner reaches C1 and C2; the guard panel reads GREEN;
@@ -484,31 +560,37 @@ questions 2 and 3 (steps G6 and G8). Do it on a normal ruleset first.
 
 ### I. Trade, tips and payouts (needs a completed ride; Forever's Hardcore trade rules are in I8)
 
-- [ ] **I1. Open trade from the click.** Needs: T still in W's group and within
-      trade range. Do: T presses Open trade with W in the arrival window.
-      Expect: W gets a trade request and the trade window opens once W accepts
-      it; T's arrival window says "Put 1g in the trade" (Taxi cannot read the
-      amount back, so this line is always shown); no "action blocked" popup.
-      T must not press Leave group first: Taxi only opens a trade with a group
-      member (otherwise "The game would not open a trade.").
-- [ ] **I2. `SetTradeMoney` from the click (spec §16.4).** Do: with the trade
-      window open, look at T's gold box after pressing Open trade again (Taxi
-      tries `C_TradeInfo.SetTradeMoney` while a window is open). Expect and
-      record: whether the gold field filled in by itself, and that there was no
-      "action blocked" popup. If the gold is filled, the "Put 1g in the trade"
-      hint is still shown (harmless); a possible later improvement is to
-      confirm it by the trade-money events. Also run
-      `/run print(GetPlayerTradeMoney)`: a `function` means the old getter
+- [ ] **I1. Open trade, and the tip going in (R63).** Needs: T still in W's
+      group and within trade range. Do: T presses Open trade with W in the
+      arrival window (1g picked); W accepts the trade request; T watches the
+      gold field as the trade window opens. Expect: the trade window opens and
+      T's arrival window says "Put 1g in the trade" (Taxi cannot read the
+      amount back, so this line is always shown). Taxi tries
+      `C_TradeInfo.SetTradeMoney` the moment the window opens (up to 10
+      seconds after the press), so the 1g may already be in the window: record
+      whether it is, and whether an "action blocked" popup appeared. That call
+      is made from the game's `TRADE_SHOW` event, not from a click; if the game
+      blocks it there, report it: the call would have to move. T must not press
+      Leave group first: Taxi only opens a trade with a group member
+      (otherwise "The game would not open a trade.").
+- [ ] **I2. `SetTradeMoney` from a click (spec §16.4).** Needs: the trade
+      window open (I1). Do: T empties the gold field and presses Open trade
+      again, and watches it. Expect and record: whether the click puts the gold
+      in, and whether an "action blocked" popup appears. If the gold goes in
+      from the click but not in I1, the call belongs in the click only. Also
+      run `/run print(GetPlayerTradeMoney)`: a `function` means the old getter
       exists in Forever and Taxi could read the amount back (that needs a
       decision, it is not in the API docs); `nil` means it does not.
 - [ ] **I3. The trade partner is "NPC".** Do: with the trade window open,
       `/run print(UnitName("NPC"))` Expect: the partner's name in the form of C1.
-- [ ] **I4. A completed trade is a recorded tip.** Do: T puts 1g in, both
-      accept. Expect: chat says "Trade complete." (`/dump ERR_TRADE_COMPLETE`
-      shows the same text, which Taxi matches in the `UI_INFO_MESSAGE` event);
-      within about 3 seconds the tip is recorded: W's My stand Payouts show "Owed 25s · paid 0c" for each
-      clicker at 25%, and each clicker's Clicking tab shows "Owed 25s ·
-      received 0c". A cancelled trade and an items-only trade record nothing.
+- [ ] **I4. A completed trade is a recorded tip.** Needs: a ride that ended
+      in the arrival window (G12), T still in W's group, C1 and C2 on the crew
+      at 25%. Do: T puts 1g in the trade, both accept. Expect: chat says "Trade
+      complete." (`/dump ERR_TRADE_COMPLETE` shows the same text, which Taxi
+      matches in the `UI_INFO_MESSAGE` event); within about 3 seconds the tip is
+      recorded: W's My stand Payouts show "Owed 25s · paid 0c" for each
+      clicker, and each clicker's Clicking tab shows "Owed 25s · received 0c".
+      A cancelled trade and an items-only trade record nothing.
 - [ ] **I5. `InitiateTrade(unit)`.** Do: `/run InitiateTrade("party1")` within
       trade range. Expect: the other player gets a trade request.
 - [ ] **I6. Paying a clicker.** Do: W presses Pay on a Payouts row. Expect: a
@@ -516,10 +598,12 @@ questions 2 and 3 (steps G6 and G8). Do it on a normal ruleset first.
       would not open a trade."); after W puts the gold in and the trade
       completes, the row shows the amount as paid and the clicker's shift-end
       window shows what was received.
-- [ ] **I7. Money arrives in time.** Evidence from I4 and I6: `PLAYER_MONEY` (the
-      gold change) must show within about 3 seconds of the trade window
-      closing, or the tip is not recorded. If tips are missed, `settleTrade`
-      in `Taxi/Game/WoW.lua` waits too short.
+- [ ] **I7. Money arrives in time.** Do: complete three 1g trades (I4, I6) and
+      each time note how long after the trade window closes the Payouts line
+      (W) or the "Owed ... · received ..." line (clicker) updates. Expect:
+      within about 3 seconds each time (the game's `PLAYER_MONEY` must show by
+      then, or the trade is not recorded). If tips are missed, raise
+      `TRADE_SETTLE_SECONDS` in `Taxi/Game/WoW.lua`.
 - [ ] **I8. Forever Hardcore trade rules (spec §16.7).** Not published at the
       time of writing. Do: on a Hardcore character, trade gold with a group
       member. Expect and record: allowed or blocked, with the game's message.
@@ -585,9 +669,14 @@ questions 2 and 3 (steps G6 and G8). Do it on a normal ruleset first.
 - [ ] **K4. History.** Do: after a ride as traveler, a declined request, a ride
       given and a clicker shift, open the History tab. Expect: all four, newest
       first, with the right titles; `/reload` keeps them.
-- [ ] **K5. Guild highlight comes from the real roster.** See E2, C5. Expect the
-      roster to be known shortly after login (`C_GuildInfo.GuildRoster()` is
-      requested when Taxi starts).
+- [ ] **K5. Guild highlight comes from the real roster.** Needs: a guild and a
+      guildmate with a stand open. Do: log in, wait about 10 seconds, open
+      Travel, then run `/run print(GetNumGuildMembers(),GetGuildRosterInfo(1))`.
+      Expect: the guildmate's row is green and first without any extra step
+      (Taxi requests the roster with `C_GuildInfo.GuildRoster()` when it
+      starts), and the roster call prints a number above 0 and a name (C5). If
+      the row turns green only after you open the Guild window, the roster is
+      not requested early enough.
 
 ### L. Hardcore (only once Hardcore launches, on throwaway characters)
 
@@ -610,15 +699,27 @@ questions 2 and 3 (steps G6 and G8). Do it on a normal ruleset first.
       Expect: `/run print(UnitIsDeadOrGhost("player"))` says `true`; chat says
       "Taxi: Your Hardcore character has died."; the window shows the banner and
       every action button is greyed; `/taxi debug` shows no errors.
-- [ ] **L5. `CONFIRM_SUMMON` on Hardcore.** Expect: a warlock's Ritual of
-      Summoning gives the same popup and guard panel as on a normal ruleset
-      (G7).
+- [ ] **L5. `CONFIRM_SUMMON` on Hardcore.** Needs: Hardcore live and the
+      4-character run. Do: W casts Ritual of Summoning on T (G5) and T watches
+      the screen. Expect: the same popup and guard panel as on a normal
+      ruleset (G7).
+- [ ] **L6. A real death during `/taxi sim` is still reported (R62).** Needs:
+      Hardcore live, a throwaway T that has just arrived on W's ride (G12), and
+      a third client running the addon-messages helper. Do: T types `/taxi
+      sim`, then dies within 2 minutes of arriving (with the sim running).
+      Expect: the third client's helper prints a `CHANNEL` line from T just
+      after the death (the DEATH report), and W's row there shows "⚠ 1
+      reported death"; nothing else from T's real addon goes out while the sim
+      runs.
 
 ### M. Instances and lockdown
 
-- [ ] **M1. The lockdown flag.** Do: `/run print(C_ChatInfo.InChatMessagingLockdown())`
-      outside and then inside a dungeon (and in an encounter). Expect and
-      record when it turns `true` (in the instance, or only in encounters).
+- [ ] **M1. The lockdown flag and result code 11.** Do:
+      `/run print(C_ChatInfo.InChatMessagingLockdown())` outside, then inside a
+      dungeon (and in an encounter); inside, also run the first line of B5.
+      Expect and record: when the flag turns `true` (in the instance, or only
+      in encounters), and that the send returns 11 (AddOnMessageLockdown) while
+      it is.
 - [ ] **M2. Entering an instance.** Needs: W with an open stand. Do: walk into a
       dungeon. Expect: chat says "Taxi: Paused (instance)" (or the footer, if
       the window is open) once, W's stand is closed, no Lua error.
@@ -628,8 +729,9 @@ questions 2 and 3 (steps G6 and G8). Do it on a normal ruleset first.
       dungeon press a Request. Expect: no Lua error; the message goes out after
       leaving (or the request ends with "Your request to ... ended without a
       ride."). Record which.
-- [ ] **M5. Back outside.** Expect: the "Paused (instance)" line is gone, a new
-      stand opens, messages flow again (B6).
+- [ ] **M5. Back outside.** Do: leave the dungeon, then open a stand and
+      request a ride (E1, E6). Expect: the "Paused (instance)" line is gone and
+      messages flow again (B6).
 
 ### N. Windows, art and combat (alone unless noted)
 
@@ -645,8 +747,10 @@ questions 2 and 3 (steps G6 and G8). Do it on a normal ruleset first.
       running into the buttons; the arrows at the right scroll the list and so
       does the wheel; the detail lines under the Travel list are not cut off
       at the bottom; the footer is readable.
-- [ ] **N3. The secure button's text fits** ("Summon <Name>", "Open portal to
-      Thunder Bluff"). The glyph checks are in Part 1.
+- [ ] **N3. The secure button's text fits.** Do: W looks at the button in
+      G5 (a warlock) and M in J6 (a mage, "Open portal to Thunder Bluff" being
+      the longest). Expect: "Summon <Name>" and "Open portal to <city>" fit the
+      button without being cut off. The glyph checks are in Part 1.
 - [ ] **N4. Combat and the main window** (the window holds the secure button, so
       Taxi assumes the game protects it and what it hangs from). Do and expect:
       (a) with the window open, enter combat: no "action blocked" popup, texts
@@ -663,26 +767,34 @@ questions 2 and 3 (steps G6 and G8). Do it on a normal ruleset first.
       blocked message, say so, and the guards come out (`Taxi/UI/MainWindow.lua`
       `Show/Hide/Toggle/ShowTab/OnDragStart/OnDragStop` and the swap in
       `Taxi/UI/MyStand.lua`).
-- [ ] **N5. The footer.** Expect: two lines. Above: Taxi's status ("Paused
-      (instance)", the channel problem, the newer-version line, or an action's
-      answer for 10 seconds). Below: "New ratings are saved on /reload or
-      logout." whenever there are unsaved ratings and you are out of combat,
+- [ ] **N5. The footer.** Do, with `/taxi` open: (a) walk into a dungeon
+      (M2); (b) after K1, out of combat, read the lower line; (c) enter combat
+      and read it again; (d) press Open stand with seats 0 (E8). Expect: two
+      lines. Above: Taxi's status ("Paused (instance)" in (a), the channel
+      problem, the newer-version line, or an action's answer for 10 seconds as
+      in (d)). Below: "New ratings are saved on /reload or logout." whenever
+      there are unsaved ratings and you are out of combat ((b)), gone in (c),
       whatever the line above says.
-- [ ] **N6. Statuses go to chat only while the window is closed.** Expect: with the
-      window closed a status (such as "Paused (instance)") appears in chat as
-      "Taxi: ..."; with it open it shows only in the footer.
-- [ ] **N7. Sounds.** Expect: the ride-request toast and the portal alert are
-      audible in the real game too (the Part 1 line covers the sim).
-- [ ] **N8. `/taxi` itself.** Expect: `/taxi` toggles the window; `/taxi foo` prints
-      "/taxi opens the window; /taxi debug shows version, status and errors;
-      /taxi sim plays a made-up world."
+- [ ] **N6. Statuses go to chat only while the window is closed.** Do: walk
+      into a dungeon (M2) and out again, once with the window closed and once
+      with it open. Expect: closed, a "Taxi: Paused (instance)" line in chat;
+      open, the line is only in the footer.
+- [ ] **N7. Sounds.** Do: with game sound on, W gets a ride request (G3) and
+      then clicks Summon (G5), and C1 watches. Expect: a ready-check sound with
+      the toast (`SOUNDKIT.READY_CHECK`) and a raid-warning sound with the
+      clickers' banner (`SOUNDKIT.RAID_WARNING`). If silent, the name is missing
+      from `SOUNDKIT` in Forever (`sound()` in `Taxi/UI/Dialogs.lua`).
+- [ ] **N8. `/taxi` itself.** Do: type `/taxi`, then `/taxi foo`. Expect:
+      `/taxi` toggles the window; `/taxi foo` prints "/taxi opens the window;
+      /taxi debug shows version, status and errors; /taxi sim plays a made-up
+      world."
 
 ### O. The end of a session
 
 - [ ] **O1. Still clean.** Do: after a long group session, `/taxi debug`. Expect:
       `0 errors logged`; in particular no lines from "window refresh", "UI
       start" or "window build".
-- [ ] **O2. The final public name (spec §16.9).** Not a game check: before any
-      public release, replace the placeholder "Taxi" (see the README, "The
-      name") and settle the SavedVariables names, because renaming them later
-      loses everyone's stored ratings.
+- [ ] **O2. The final public name (spec §16.9).** Not a game check (Do:
+      nothing in game): before any public release, replace the placeholder
+      "Taxi" (see the README, "The name") and settle the SavedVariables names,
+      because renaming them later loses everyone's stored ratings.

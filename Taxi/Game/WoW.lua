@@ -5,7 +5,8 @@ local _, ns = ...
 -- its header for the method list), plus the transport backend Comms/Transport
 -- sends through and the two clocks. This is the only file that reads the game
 -- for the Engine; it can't run on a PC, so tests/game/wow_spec.lua runs it
--- against a fake of the API and Task 19 checks it in game.
+-- against a fake of the API. It has not yet been run against the real game:
+-- docs/testing/in-game-checklist.md lists what to check.
 --
 --   local game = ns.WoWGame.new()
 --   game:listen(function(event, ...) engine:onGame(event, ...) end, log)
@@ -36,7 +37,7 @@ local _, ns = ...
 -- A realm is added as "-Realm" when the game gives one, and my own realm is
 -- dropped, so UnitName, the CHAT_MSG_ADDON sender, the summoner, the guild
 -- roster and HARDCORE_DEATHS all come out the same way (canonical below).
--- Assumed, not proven: Task 19 checks the forms in game.
+-- Assumed, not proven: area C of the in-game checklist checks the forms in game.
 --
 -- Anything unknown is nil, never a stand-in like 0 or "" (R21).
 local Config, Names = ns.Config, ns.Names
@@ -44,6 +45,7 @@ local Config, Names = ns.Config, ns.Names
 local POLL_SECONDS = 1 -- position and summon poll
 local MOVE_YARDS = 5 -- a poll that finds me farther than this from the last MOVED fires MOVED again
 local TRADE_SETTLE_SECONDS = 3 -- a completed trade's money must show up this soon after the window closed
+local TIP_HOLD_SECONDS = 10 -- a tip asked for before the trade window opens is put in it if the window opens this soon (R63)
 
 -- Enum.SendAddonMessageResult (ChatConstantsDocumentation): Forever's numbers
 -- are the very codes Transport reads (3 AddonMessageThrottle, 8 ChannelThrottle,
@@ -350,17 +352,24 @@ function Game:openTrade(name)
     return false
   end
   InitiateTrade(unit)
+  self.askedTrade = canonical(name)
   return true
 end
 
--- Tries to put copper in the open trade window (none is open right after
--- openTrade: the request has not been answered yet), and returns false either
--- way: Forever's API has no getter to read the amount back, so success can't
--- be known and the UI always shows "Put X in the trade" (R55). Restricted in
--- Forever (HasRestrictions), so it is only tried from the player's own click.
+-- Tries to put copper in the trade, and returns false either way: Forever's API
+-- has no getter to read the amount back, so success can't be known and the UI
+-- always shows "Put X in the trade" (R55). With a window open it is tried at
+-- once. Right after openTrade none is open (the other player has not answered
+-- yet), so the amount is kept for the window of that same partner, if it opens
+-- within TIP_HOLD_SECONDS (R63, in TRADE_SHOW below). SetTradeMoney is
+-- restricted in Forever (HasRestrictions); whether the game lets either attempt
+-- through is what the in-game checklist (I1, I2) looks at, and a refusal is
+-- swallowed.
 function Game:trySetTradeMoney(copper)
   if self.tradeOpen then
     pcall(C_TradeInfo.SetTradeMoney, copper)
+  elseif self.askedTrade ~= nil then
+    self.heldTip = { copper = copper, partner = self.askedTrade, at = GetTime() }
   end
   return false
 end
@@ -560,7 +569,19 @@ end
 EVENTS.TRADE_SHOW = function(g)
   g.tradeOpen = true
   local money = number(GetMoney())
-  g.trade = money ~= nil and { partner = fullName("NPC"), money = money } or nil
+  local partner = fullName("NPC")
+  g.trade = money ~= nil and { partner = partner, money = money } or nil
+  -- A tip held since the player pressed Open trade (R63): put it in this window
+  -- if it is the same partner's and not too old. It is used once.
+  local held = g.heldTip
+  if held ~= nil then
+    if GetTime() - held.at > TIP_HOLD_SECONDS then
+      g.heldTip = nil
+    elseif partner ~= nil and Names.same(partner, held.partner) then
+      g.heldTip = nil
+      pcall(C_TradeInfo.SetTradeMoney, held.copper)
+    end
+  end
 end
 
 EVENTS.UI_INFO_MESSAGE = function(g, _, message)

@@ -10,10 +10,12 @@ local _, ns = ...
 --                  never rated, and a mage has no clickers.
 --
 -- Open trade is Engine:submitArrival, which sends the rating and opens the
--- trade. Setting the money in the trade window is not possible from an addon
--- in Forever (trySetTradeMoney fails there), so the window then says "Put 1g in
--- the trade" and the player types it; the Engine learns of the tip from the
--- finished trade, not from this window. A rating is sent once: opening the
+-- trade. Whether an addon may set the money in the trade window in Forever is
+-- not known: SetTradeMoney is restricted and has no way to read the amount
+-- back (checklist I1, I2). Taxi tries (right after the window opens, R63) and
+-- can't tell whether it worked, so the window always says "Put 1g in the
+-- trade" and the player checks or types it; the Engine learns of the tip from
+-- the finished trade, not from this window. A rating is sent once: opening the
 -- trade again sends none.
 --
 -- A plain free-standing window (Widgets.window): it shows in combat, and the

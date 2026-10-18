@@ -271,6 +271,17 @@ describe("Engine core", function()
       assert.are.equal(1, #w.bus:sent())
     end)
 
+    it("a muted engine still sends a DEATH report, and nothing else (R62)", function()
+      local p = add("Ana Smith")
+      add("Bo Lee")
+      local fields = {rideId = "Dar Kbolt@Ana Smith@1", victim = "Ana Smith", warlock = "Dar Kbolt", secs = 5, source = "self"}
+      p.engine:mute(true)
+      assert.are.same({nil, "muted"}, {p.engine:send("RATING", {kind = "trust", target = "Dar Kbolt", stars = 5, id = "r1", ts = w.clock:now()}, "CHANNEL")})
+      assert.is_string(p.engine:send("DEATH", fields, "CHANNEL"))
+      w:advance(2)
+      assert.are.equal(1, #w.bus:sent())
+    end)
+
     it("refuses every public action and every channel message while disabled; whispers still go", function()
       local p = add("Ana Smith", {channelsFull = true})
       add("Bo Lee")

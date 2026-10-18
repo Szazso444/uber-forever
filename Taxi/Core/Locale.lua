@@ -298,7 +298,7 @@ M.SHIFTEND_CLOSE = "Close"
 -- /taxi sim (UI/SimControls.lua).
 M.SIM_FAILED = "The sim failed. /taxi debug shows why."
 M.SIM_TITLE = "Sim controls"
-M.SIM_STARTED = "Sim started: you are \"You\", with 100g, in a made-up world. Open the Travel tab and press Request on Dar Kbolt. Nothing reaches the real channel. /taxi sim off ends it. Don't play Hardcore content while /taxi sim is on — real death reports are paused."
+M.SIM_STARTED = "Sim started: you are \"You\", with 100g, in a made-up world. Open the Travel tab and press Request on Dar Kbolt. Nothing from the sim reaches the real channel. /taxi sim off ends it. Real death reports still go out; everything else from the real addon is paused until /taxi sim off."
 M.SIM_STOPPED = "Sim ended. Taxi is back on your real character."
 M.SIM_ALREADY = "The sim is already running. /taxi sim off ends it."
 M.SIM_NOT_RUNNING = "The sim is not running."

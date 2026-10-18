@@ -21,7 +21,8 @@ local _, ns = ...
 --
 -- The simulation's clock runs on the screen's: one OnUpdate advances it by the
 -- time that passed. While the sim runs the real Engine is muted (Engine:mute),
--- so nothing reaches the real channel, and the real windows are quiet; /taxi
+-- so nothing of the real addon's reaches the real channel except the real
+-- character's own death report (R62), and the real windows are quiet; /taxi
 -- sim off puts everything back. The sim's data is never saved.
 local L, Money, Names = ns.L, ns.Money, ns.Names
 local UI = ns.UI

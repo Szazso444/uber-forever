@@ -392,6 +392,66 @@ describe("WoW game adapter", function()
       assert.are.equal(5000, w.tradeMoneySet)
     end)
 
+    describe("a tip asked for before the trade window opens (R63)", function()
+      before_each(function()
+        listen()
+      end)
+
+      it("is put in the trade when the window opens with the same partner", function()
+        assert.is_true(game:openTrade("Dar Kbolt"))
+        assert.is_false(game:trySetTradeMoney(10000)) -- no window yet: kept, and still never claimed
+        assert.is_nil(w.tradeMoneySet)
+        w.advance(3)
+        w.units.NPC = { name = "Dar Kbolt" }
+        w.fire("TRADE_SHOW")
+        assert.are.equal(10000, w.tradeMoneySet)
+        -- It is used once: the next window gets nothing.
+        w.tradeMoneySet = nil
+        w.fire("TRADE_CLOSED")
+        w.fire("TRADE_SHOW")
+        assert.is_nil(w.tradeMoneySet)
+      end)
+
+      it("is not put in a trade with someone else, or after 10 seconds", function()
+        game:openTrade("Dar Kbolt")
+        game:trySetTradeMoney(10000)
+        w.units.NPC = { name = "Bo Lee" }
+        w.fire("TRADE_SHOW")
+        assert.is_nil(w.tradeMoneySet)
+        w.fire("TRADE_CLOSED")
+
+        game:openTrade("Dar Kbolt")
+        game:trySetTradeMoney(10000)
+        w.advance(11)
+        w.units.NPC = { name = "Dar Kbolt" }
+        w.fire("TRADE_SHOW")
+        assert.is_nil(w.tradeMoneySet)
+      end)
+
+      it("is not remembered without a trade asked for (a payout trade or a stray call sets nothing)", function()
+        game:trySetTradeMoney(10000) -- no openTrade before it: no partner to hold it for
+        game:openTrade("Dar Kbolt") -- an openTrade with no tip
+        w.units.NPC = { name = "Dar Kbolt" }
+        w.fire("TRADE_SHOW")
+        assert.is_nil(w.tradeMoneySet)
+      end)
+
+      it("never raises when the game refuses it, and the trade is still followed", function()
+        game:openTrade("Dar Kbolt")
+        game:trySetTradeMoney(10000)
+        w.tradeRaises = true
+        w.units.NPC = { name = "Dar Kbolt" }
+        w.money = 7000
+        assert.has_no.errors(function() w.fire("TRADE_SHOW") end)
+        assert.are.equal(0, #logged)
+        w.fire("UI_INFO_MESSAGE", 1, "Trade complete.")
+        w.fire("TRADE_CLOSED")
+        w.money = 6000
+        w.fire("PLAYER_MONEY")
+        assert.are.same({ { "TRADE_DONE", "Dar Kbolt", 1000, 0 } }, events)
+      end)
+    end)
+
     it("reads money", function()
       w.money = 12345
       assert.are.equal(12345, game:money())

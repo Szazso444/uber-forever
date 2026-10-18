@@ -305,6 +305,40 @@ describe("Reputation sync", function()
       hear(p, "Vic Tim", "ARRIVED", {rideId = id, warlock = "Dar Kbolt"})
     end
 
+    -- A Hardcore victim who arrived on Dar Kbolt's ride a moment ago.
+    local function victim()
+      local v = add("Vic Tim")
+      v.engine.witness:rideStarted(id, "Vic Tim", "Dar Kbolt", now(), "Vic Tim")
+      v.engine.witness:arrived(id, "Vic Tim", now(), "Vic Tim")
+      return v
+    end
+
+    local function deathsFrom(name)
+      return ofType(wire(name), "DEATH")
+    end
+
+    it("the player's own death is reported while the engine is muted for /taxi sim (R62)", function()
+      local v = victim()
+      v.engine:mute(true)
+      w:advance(5)
+      v.dead = true
+      v.engine:onGame("PLAYER_DIED")
+      w:advance(2)
+      local sent = deathsFrom("Vic Tim")
+      assert.are.equal(1, #sent)
+      assert.are.same({id, "Vic Tim", "Dar Kbolt", "self"}, {sent[1].rideId, sent[1].victim, sent[1].warlock, sent[1].source})
+    end)
+
+    it("a death report already queued survives the sim muting the engine just after it (R62)", function()
+      local v = victim()
+      w:advance(5)
+      v.dead = true
+      v.engine:onGame("PLAYER_DIED") -- the DEATH is queued, not yet on the bus
+      v.engine:mute(true)
+      w:advance(2)
+      assert.are.equal(1, #deathsFrom("Vic Tim"))
+    end)
+
     it("an HC_DEATH within the window after arrival is a heavy observed death", function()
       rode(b)
       w:advance(30)

@@ -1,8 +1,8 @@
 # Taxi
 
 A trust-based summon and portal board for **World of Warcraft: Forever**, built
-for the Hardcore ruleset (it also runs on the other rulesets, which is handy
-for testing). Players who offer travel post a "stand"; players who want travel
+for the Hardcore ruleset (it is meant to also run on the other rulesets, which
+is handy for testing). Players who offer travel post a "stand"; players who want travel
 pick one, ask for a seat, and the addon checks the summon against the ride they
 agreed to before they accept it.
 
@@ -60,7 +60,7 @@ New ratings are written to disk on `/reload` or logout (the window reminds you).
 | Command | What it does |
 |---|---|
 | `/taxi` | Opens or closes the window (tabs Travel, My stand, Clicking, History). The minimap button does the same. |
-| `/taxi sim` | Starts a built-in simulation: made-up players and a made-up world, so you can try every window alone. Nothing reaches the real channel and nothing is saved. Don't play Hardcore content while it is on: real death reports are paused. |
+| `/taxi sim` | Starts a built-in simulation: made-up players and a made-up world, so you can try every window alone. Nothing from the sim reaches the real channel and nothing is saved. Real death reports still go out; everything else from the real addon is paused until `/taxi sim off`. |
 | `/taxi sim off` | Ends the simulation and gives your real character back. |
 | `/taxi debug` | Prints the version, the engine state, whether the Hardcore ruleset is active, the last status line and any errors Taxi logged. |
 
@@ -68,20 +68,22 @@ Anything else prints a one-line usage message.
 
 ## Safety model
 
-Everything the Summon Guard says comes from your own client (the summoner and
-the landing area in the summon popup, the positions and combat state of your
-group), never from a chat message. Ratings rest on the sender field of addon
-messages, which the server fills in, so a rating counts fully only when it comes
-straight from the player who gave it; a Trust rating counts fully only when the
-traveler's rating and the warlock's own ride log name the same ride. Second-hand copies
-(relays) go one hop, weigh little, and are capped per relayer and in total; a
+The Summon Guard compares what your own client sees (the summoner and the
+landing area in the summon popup, the positions and combat state of your group,
+the zone's level range) with what you agreed to: the warlock and the place come
+from the ride and the stand you requested, and the Trust line from the ratings
+your addon holds. Ratings rest on the sender field of addon messages, which the
+server fills in, so a rating counts fully only when it comes straight from the
+player who gave it; a Trust rating counts fully only when the warlock's own ride
+log names the rater as the traveler of that ride. Second-hand copies (relays) go
+one hop, weigh little, and are capped per relayer and in total; a
 relayer caught contradicting the real rater gets strikes and is ignored after
 three. A traveler who dies within two minutes of arriving counts as a heavy 1★
 against the warlock, but only when the death is corroborated. Scores include a
 prior, so one fresh 5★ cannot make a new warlock look perfect. **Known limits:**
 there is no central server, so a ring of alts can still rate each other (such
-ratings are strangers' with no shared history, and each fresh alt can file only
-one light claim); relays can be invented, which is why their total weight is
+ratings are strangers' with no shared history, and a rater's one-sided ratings
+of a warlock count together as one, so a fresh alt adds little); relays can be invented, which is why their total weight is
 capped; editing your own SavedVariables only fools yourself; two players may see
 slightly different numbers until their addons sync; a crash before logout loses
 that session's new ratings; and the guard cannot see a mob that wanders onto the
@@ -116,18 +118,21 @@ its rules in `.luacheckrc` also enforce the layering below.
 
 Files load in the order of `Taxi/Taxi.toc`.
 
-- `Taxi/Core/`: `Config.lua` (every name and tunable number), `Locale.lua` (all
-  player-facing strings), `Callbacks.lua`, and `Init.lua` (the bootstrap and the
-  slash command).
+- `Taxi/Core/`: `Config.lua` (the addon's names and most tunable numbers; a few
+  timings sit in the file they belong to), `Locale.lua` (all player-facing
+  strings), `Callbacks.lua`, and `Init.lua` (the bootstrap and the slash
+  command).
 - `Taxi/Domain/` and `Taxi/Comms/`: pure Lua with no WoW globals: stands, board,
   negotiation, ride state machine, Summon Guard, ratings, witness, ledger, store,
   and the wire protocol with its chunking, throttling and queue.
 - `Taxi/App/`: the Engine and its services (Driver, Traveler, Clicker,
   Reputation), written against an abstract game adapter and clock.
-- `Taxi/Game/WoW.lua` (with `Core/Init.lua`): the only code that reads the real
-  game. `Taxi/Sim/`: a simulated world, message bus and fake game adapter that the
+- `Taxi/Game/WoW.lua` (with `Core/Init.lua`): the adapter that reads
+  the real game for the Engine. `Taxi/Sim/`: a simulated world, message bus and fake game adapter that the
   tests and `/taxi sim` run the same Engine on.
-- `Taxi/UI/`: the windows. They talk to the Engine only.
+- `Taxi/UI/`: the windows. They talk to the Engine and use Domain helpers (money,
+  names, board and rating text), and read a few game facts directly: combat
+  lockdown, the summon popup and sounds.
 
 The design is in [docs/superpowers/specs/2026-10-17-uber-forever-design.md](docs/superpowers/specs/2026-10-17-uber-forever-design.md).
 

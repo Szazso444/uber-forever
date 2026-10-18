@@ -10,7 +10,7 @@ max_line_length = false
 -- Core/Init.lua use. The C_* namespaces list their functions, so a call to
 -- anything else is a luacheck error. Every C_* function and event used is in
 -- Forever 1.60.1's generated API docs; the plain globals marked "legacy" are
--- not in those docs and are checked in game (Task 19).
+-- not in those docs and are still to be checked in game (checklist A5).
 local wow_api = {
   -- frames, timers, time
   "CreateFrame", -- legacy
@@ -88,7 +88,7 @@ files["Taxi/UI"] = {
     "UnitAffectingCombat",
     "GetCursorPosition", -- dragging the minimap button
     "date", -- legacy (WoW's os.date): the History tab's times
-    "UISpecialFrames", -- legacy: the names of the frames Esc closes (checked in game, Task 19)
+    "UISpecialFrames", -- legacy: the names of the frames Esc closes (to be checked in game)
     "PlaySound", -- the toast's and the portal alert's sounds: PlaySound(SOUNDKIT.READY_CHECK)
     "SOUNDKIT",
     "StaticPopup_FindVisible", -- Blizzard's popup frame (Blizzard_StaticPopup), read to anchor the guard panel; never hooked

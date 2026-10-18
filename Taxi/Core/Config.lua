@@ -1,6 +1,12 @@
 local _, ns = ...
 
--- Every tunable number and name in one place. Pure data: no WoW API.
+-- The addon's names and most of its tunable numbers in one place. Pure data: no
+-- WoW API. A few constants that belong to one file's own mechanism stay there:
+-- Core/Init.lua (channel join timing), App/Engine.lua (pump and sweep
+-- intervals), App/Driver.lua (invite and raid timeouts, seat limits),
+-- App/Traveler.lua (landing window, jump and crew distances), Comms/Transport.lua
+-- (chunk limits, throttle wait), Game/WoW.lua (poll and trade timings) and
+-- UI/Dialogs.lua (toast time).
 local M = {
   -- Names
   NAME = "Taxi",
@@ -62,11 +68,13 @@ local M = {
     FUTURE_SLACK = 300,
   },
 
-  -- Warlock spells and items (Classic IDs; verified in-game in Task 19)
+  -- Warlock spells and items (Classic IDs, assumed for Forever: not yet checked
+  -- in game, see docs/testing/in-game-checklist.md J1 and J3)
   RITUAL_SPELL = 698, -- Ritual of Summoning
   SOUL_SHARD_ITEM = 6265,
   -- Mage portals. mapID is the destination city's uiMapID: a portal traveler
-  -- has arrived when their own map is this one (verified in-game in Task 19).
+  -- has arrived when their own map is this one. The ids and spell ids are
+  -- Classic's, assumed for Forever and not yet checked in game (checklist J1, J2).
   PORTALS = {
     { spellId = 10059, key = "stormwind", mapID = 1453 },
     { spellId = 11416, key = "ironforge", mapID = 1455 },
