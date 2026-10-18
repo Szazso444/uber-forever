@@ -159,6 +159,38 @@ describe("backdated rides from one alt", function()
   end)
 end)
 
+-- R67: receipts alone are one side's word. An alt that announces 300 arrivals
+-- from a warlock (or the warlock's addon that logs them) moves the shown
+-- count by little, and Store.prune caps what is kept.
+describe("a flood of arrivals", function()
+  it("from one alt shows no summons, and is capped on disk", function()
+    local ns = Taxi.load()
+    ns.Config.RATING.CAP_PER_KIND = 100
+    local w = ns.World.new{seed = 13, start = 600000}
+    local alt = w:addPlayer{name = "Alt One", class = "MAGE", level = 20, place = "ironforge"}
+    local lock = w:addPlayer{name = "Any Lock", class = "WARLOCK", level = 50, place = "gadgetzan"}
+    local obs = w:addPlayer{name = "Fre Sh", class = "ROGUE", level = 44, place = "ironforge"}
+    local now = math.floor(w.clock:now())
+    for i = 1, 300 do
+      alt.engine:send("ARRIVED", {rideId = ns.Ride.makeId("Any Lock", "Alt One", now - i), warlock = "Any Lock"}, "CHANNEL")
+    end
+    w:advance(400)
+    assert.are.equal(0, obs.engine:summary("Any Lock", "trust").count) -- no ride log backs any of them
+    -- With the warlock in league logging every one of them: one ride a day.
+    for i = 1, 300 do
+      lock.engine:send("RIDE_LOG", {rideId = ns.Ride.makeId("Any Lock", "Alt One", now - i), traveler = "Alt One"}, "CHANNEL")
+    end
+    w:advance(400)
+    assert.are.equal(1, obs.engine:summary("Any Lock", "trust").count)
+    ns.Store.prune(obs.db)
+    local receipts, logs = 0, 0
+    for _ in pairs(obs.db.receipts["Any Lock"]) do receipts = receipts + 1 end
+    for _ in pairs(obs.db.rideLogs["Any Lock"]) do logs = logs + 1 end
+    assert.are.same({100, 100}, {receipts, logs})
+    assert.are.same({}, w.errors)
+  end)
+end)
+
 describe("invented relays", function()
   local ns, w, obs, relayers, nobody, TS, ID
   before_each(function()

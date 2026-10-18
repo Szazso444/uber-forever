@@ -131,7 +131,9 @@ describe("Reputation sync", function()
       hear(b, "Tra Veler", "ARRIVED", {rideId = id, warlock = "Dar Kbolt"})
       assert.are.equal(START, b.engine.db.receipts["Dar Kbolt"][id])
       assert.is_true(b.engine.dirty)
-      assert.are.equal(1, b.engine:summary("Dar Kbolt", "trust").count)
+      assert.are.equal(0, b.engine:summary("Dar Kbolt", "trust").count) -- the traveler's word alone (R67)
+      hear(b, "Dar Kbolt", "RIDE_LOG", {rideId = id, traveler = "Tra Veler"})
+      assert.are.equal(1, b.engine:summary("Dar Kbolt", "trust").count) -- both sides
     end)
 
     it("files no receipt for an id naming another traveler, another warlock, or no one", function()

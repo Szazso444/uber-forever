@@ -174,11 +174,37 @@ local function trimDeaths(byId, cap)
   end
 end
 
--- Cap every warlock's trust and share lists, and the deaths on file for each
--- warlock, at RATING.CAP_PER_KIND. Ratings drop relayed records before direct
--- ones and the oldest first within each; deaths drop light ones before heavy
--- ones, the oldest first within each. Nothing else is pruned: `given` in
--- particular is kept for good. A newer db is not touched.
+-- Drop entries of one warlock's receipts (id -> ts) or ride logs (id -> {ts,
+-- ...}), in place, until at most cap are left: the oldest first, then by id.
+-- An entry with no usable time counts as the oldest.
+local function trimByTime(byId, cap)
+  local ranked = {}
+  for id, entry in pairs(byId) do
+    local ts = type(entry) == "number" and entry == entry and entry or timestamp(entry)
+    ranked[#ranked + 1] = { id = id, key = tostring(id), ts = ts }
+  end
+  local n = #ranked
+  if n <= cap then
+    return
+  end
+  table.sort(ranked, function(a, b)
+    if a.ts ~= b.ts then
+      return a.ts < b.ts
+    end
+    return a.key < b.key
+  end)
+  for i = 1, n - cap do
+    byId[ranked[i].id] = nil
+  end
+end
+
+-- Cap every warlock's trust and share lists, the deaths on file for each
+-- warlock, and each warlock's receipts and ride logs (R67), at
+-- RATING.CAP_PER_KIND each. Ratings drop relayed records before direct ones and
+-- the oldest first within each; deaths drop light ones before heavy ones, the
+-- oldest first within each; receipts and ride logs drop the oldest first.
+-- Nothing else is pruned: `given` in particular is kept for good. A newer db
+-- is not touched.
 function M.prune(db)
   if db._newer then
     return
@@ -196,6 +222,13 @@ function M.prune(db)
   for _, byId in pairs(db.deaths) do
     if type(byId) == "table" then
       trimDeaths(byId, cap)
+    end
+  end
+  for _, field in ipairs({ "receipts", "rideLogs" }) do
+    for _, byId in pairs(db[field]) do
+      if type(byId) == "table" then
+        trimByTime(byId, cap)
+      end
     end
   end
 end

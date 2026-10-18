@@ -510,6 +510,59 @@ describe("Store", function()
       end)
     end)
 
+    describe("receipts and ride logs (R67)", function()
+      local function ids(byId)
+        local out = {}
+        for id in pairs(byId) do
+          out[#out + 1] = tostring(id)
+        end
+        table.sort(out)
+        return out
+      end
+
+      it("caps a warlock's receipts and ride logs at the Config cap each, oldest first", function()
+        local db = S.init(nil)
+        db.receipts.X, db.rideLogs.X = {}, {}
+        for i = 1, 502 do
+          db.receipts.X["r" .. i] = 1000 + i
+          db.rideLogs.X["r" .. i] = { ts = 2000 - i, traveler = "Tra Veler" } -- newest first this time
+        end
+        S.prune(db)
+        assert.are.equal(500, #ids(db.receipts.X))
+        assert.are.equal(500, #ids(db.rideLogs.X))
+        assert.is_nil(db.receipts.X.r1)
+        assert.is_nil(db.receipts.X.r2)
+        assert.are.equal(1003, db.receipts.X.r3)
+        assert.is_nil(db.rideLogs.X.r502)
+        assert.is_nil(db.rideLogs.X.r501)
+        assert.are.same({ ts = 1500, traveler = "Tra Veler" }, db.rideLogs.X.r500)
+      end)
+
+      it("caps each warlock on its own, breaks ties by id and counts a malformed row as the oldest", function()
+        ns.Config.RATING.CAP_PER_KIND = 2
+        local db = S.init(nil)
+        db.receipts.X = { a = 5, b = 5, c = 5, junk = "junk" }
+        db.receipts.Y = { a = 1, b = 2 }
+        db.rideLogs.X = { a = { ts = 1 }, b = { ts = 2 }, bad = { ts = "later" }, junk = "junk" }
+        S.prune(db)
+        assert.are.same({ "b", "c" }, ids(db.receipts.X))
+        assert.are.same({ "a", "b" }, ids(db.receipts.Y))
+        assert.are.same({ "a", "b" }, ids(db.rideLogs.X))
+      end)
+
+      it("skips entries that are not tables, and leaves a newer db alone", function()
+        ns.Config.RATING.CAP_PER_KIND = 1
+        local db = S.init({ version = 1, receipts = { X = "junk" }, rideLogs = { X = 7 } })
+        S.prune(db)
+        assert.are.same({ "junk", 7 }, { db.receipts.X, db.rideLogs.X })
+        local saved = { version = 9, receipts = { X = { a = 1, b = 2 } }, rideLogs = { X = { a = { ts = 1 }, b = { ts = 2 } } } }
+        local newer = S.init(saved)
+        local before = deepCopy(newer)
+        S.prune(newer)
+        assert.are.same(before, newer)
+      end)
+    end)
+
     it("does not modify a newer db", function()
       local saved = { version = 9, ratings = { X = { trust = {} } } }
       for i = 1, 520 do saved.ratings.X.trust[i] = { ts = i } end

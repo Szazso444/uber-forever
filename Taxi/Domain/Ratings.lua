@@ -636,11 +636,13 @@ end
 --                   when nothing counts
 --   score           the weighted mean pulled toward the prior mean, for
 --                   sorting and warnings
---   count           trust: distinct ride ids across ratings, deaths and
---                   receipts; share: the number of ratings. A display figure
---                   only: relayed ratings and receipts are in it.
+--   count           trust (R67): distinct ride ids across the ratings and
+--                   deaths that count, and the rides with both a receipt and
+--                   a ride log (at most one per traveler per day of its
+--                   receipt); share: the number of ratings that count. A
+--                   display figure only: relayed ratings are in it.
 --   isNew           fewer than NEW_BELOW direct ratings (and heavy deaths, for
---                   trust). Second-hand records and receipts never clear it.
+--                   trust). Second-hand records and rides never clear it.
 --   deathsReported  deaths counted against the warlock, heavy or light
 -- Weights:
 --   * one rider, one vote (R66): of one rater's direct ratings of a warlock
@@ -743,9 +745,20 @@ function M.summary(db, target, kind)
           seen(id)
         end
       end
-      for id in pairs(sub(db, "receipts", name)) do
-        if nonEmptyString(id) then
-          seen(id)
+      -- Rides both sides vouched for (R67): the traveler's ARRIVED (a receipt,
+      -- stamped when this client heard it) and the warlock's ride log. One
+      -- traveler counts for at most one ride per day of its receipt, so one
+      -- alt and its warlock can't run the count up.
+      local receipts, perDay = sub(db, "receipts", name), {}
+      for _, id in ipairs(sortedKeys(receipts)) do
+        local heardAt, log = receipts[id], logs[id]
+        if finite(heardAt) and type(log) == "table" and nonEmptyString(log.traveler)
+          and not isLiar(db, log.traveler) then
+          local slot = log.traveler .. "\n" .. ns.Util.day(heardAt) -- a tidied name never holds a newline
+          if not perDay[slot] then
+            perDay[slot] = true
+            seen(id)
+          end
         end
       end
     end

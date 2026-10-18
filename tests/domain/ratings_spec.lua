@@ -567,33 +567,73 @@ describe("Ratings", function()
       assert.are.equal(0, shareSummary().count)
     end)
 
-    it("count includes receipts: distinct ids across ratings, deaths and receipts", function()
-      assert.is_true(direct(trust("Bob Jones", 5, "r1")))
-      assert.is_true(R.addDeath(db, { target = "Ana Smith", victim = "Cal Dunn", id = "r2", ts = T0, heavy = true }))
-      assert.is_true(R.addReceipt(db, "Ana Smith", "r1", T0))
-      assert.is_true(R.addReceipt(db, "Ana Smith", "r3", T0))
-      assert.is_true(R.addReceipt(db, "Ana Smith", "r4", T0))
-      local s = trustSummary()
-      assert.are.equal(4, s.count)
-      assert.is_true(s.isNew)
-    end)
-
-    it("does not let receipts make a warlock less New", function()
-      for i = 1, 4 do
-        assert.is_true(direct(trust("Rater " .. i, 4, "r" .. i)))
+    describe("count (R67)", function()
+      -- A ride both sides vouched for: the traveler's ARRIVED (a receipt, at
+      -- the time this client heard it) and the warlock's RIDE_LOG.
+      local function bothSides(id, traveler, heardAt)
+        assert.is_true(R.addRideLog(db, "Ana Smith", id, heardAt, traveler))
+        assert.is_true(R.addReceipt(db, "Ana Smith", id, heardAt))
       end
-      for i = 5, 7 do
-        assert.is_true(R.addReceipt(db, "Ana Smith", "r" .. i, T0))
-      end
-      local s = trustSummary()
-      assert.are.equal(7, s.count)
-      assert.is_true(s.isNew)
-    end)
 
-    it("keeps receipts out of the share count", function()
-      assert.is_true(R.addReceipt(db, "Ana Smith", "r1", T0))
-      assert.are.equal(0, shareSummary().count)
-      assert.are.equal(1, trustSummary().count)
+      it("counts distinct ids across counted ratings, deaths and rides with both a receipt and a ride log", function()
+        assert.is_true(direct(trust("Bob Jones", 5, "r1")))
+        assert.is_true(R.addDeath(db, { target = "Ana Smith", victim = "Cal Dunn", id = "r2", ts = T0, heavy = true }))
+        bothSides("r1", "Bob Jones", T0) -- the rated ride: one id
+        bothSides("r3", "Dan Eve", T0)
+        bothSides("r4", "Eve Gray", T0)
+        local s = trustSummary()
+        assert.are.equal(4, s.count)
+        assert.is_true(s.isNew)
+      end)
+
+      it("does not count a receipt without a ride log, or a ride log without a receipt", function()
+        for i = 1, 300 do
+          assert.is_true(R.addReceipt(db, "Ana Smith", "x" .. i, T0 + i))
+        end
+        assert.is_true(R.addRideLog(db, "Ana Smith", "y1", T0, "Bob Jones"))
+        assert.are.equal(0, trustSummary().count)
+      end)
+
+      it("counts at most one ride per traveler per day of its receipt", function()
+        for i = 1, 5 do
+          bothSides("a" .. i, "Alt One", T0 + i * 60)
+        end
+        bothSides("b1", "Bob Jones", T0 + 60)
+        assert.are.equal(2, trustSummary().count)
+        bothSides("a9", "Alt One", T0 + DAY + 60) -- the next day
+        assert.are.equal(3, trustSummary().count)
+      end)
+
+      it("leaves out the rides of a liar", function()
+        bothSides("a1", "Alt One", T0)
+        R.markLiar(db, "Alt One", T0 + 5)
+        assert.are.equal(0, trustSummary().count)
+      end)
+
+      it("counts a rater's ratings once: only the counted one's id", function()
+        for i = 1, 3 do
+          assert.is_true(direct(trust("Bob Jones", 5, "r" .. i, T0 + i * DAY)))
+        end
+        assert.are.equal(1, trustSummary().count)
+      end)
+
+      it("does not let rides make a warlock less New", function()
+        for i = 1, 4 do
+          assert.is_true(direct(trust("Rater " .. i, 4, "r" .. i)))
+        end
+        for i = 5, 7 do
+          bothSides("r" .. i, "Rider " .. i, T0)
+        end
+        local s = trustSummary()
+        assert.are.equal(7, s.count)
+        assert.is_true(s.isNew)
+      end)
+
+      it("keeps rides out of the share count", function()
+        bothSides("r1", "Bob Jones", T0)
+        assert.are.equal(0, shareSummary().count)
+        assert.are.equal(1, trustSummary().count)
+      end)
     end)
   end)
 
@@ -1563,7 +1603,7 @@ describe("Ratings", function()
         db.rideLogs["Ana Smith"] = {
           l1 = "x", l2 = { ts = "bad", traveler = 7 }, l3 = { ts = T0, traveler = 7 }, l4 = { ts = T0, traveler = "Kay Lane" },
         }
-        db.receipts["Ana Smith"] = { [5] = T0, r9 = T0 }
+        db.receipts["Ana Smith"] = { [5] = T0, r9 = T0, l1 = T0, l2 = T0, l3 = T0, l4 = T0, l5 = "x" }
       end
 
       it("are skipped by summary", function()
@@ -1575,7 +1615,7 @@ describe("Ratings", function()
         end)
         near(round1((0.3 * 2 + 5 * 1) / 5.3), trustS.stars, "trust stars: Fay Moss and the one good death")
         assert.are.equal(1, trustS.deathsReported)
-        assert.are.equal(3, trustS.count, "r8, d5 and the receipt r9")
+        assert.are.equal(3, trustS.count, "r8, d5 and the ride l4 (a receipt and a good ride log)")
         near(4.0, shareS.stars, "share stars")
         assert.are.equal(1, shareS.count)
       end)
